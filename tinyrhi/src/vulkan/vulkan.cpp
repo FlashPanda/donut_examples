@@ -2,7 +2,9 @@
 #include "vulkan/vulkan_core.h"
 #include <string>
 #include <vector>
+#include <windows.h>
 #include "vulkan/vulkan_win32.h"
+#include <iostream>
 
 namespace tinyrhi::vulkan
 {
@@ -22,6 +24,12 @@ namespace tinyrhi::vulkan
 	std::string name = "triangle";
 
 	uint32_t apiVersion = VK_API_VERSION_1_0;
+
+	std::vector<std::string> supportedInstanceExtensions;
+	std::vector<const char*> enabledInstanceExtensions;		// extensions used in this example
+
+	// Vulkan instance, stores all per-application states
+	VkInstance instance;
 }
 
 bool tinyrhi::vulkan::initVulkan()
@@ -48,7 +56,80 @@ bool tinyrhi::vulkan::initVulkan()
 	// query extensions supported by the instance and store for later use
 	uint32_t extCount = 0;
 	vkEnumerateInstanceExtensionProperties(nullptr, &extCount, nullptr);
+	if (extCount > 0)
+	{
+		std::vector<VkExtensionProperties> extensions(extCount);
+		if (vkEnumerateInstanceExtensionProperties(nullptr, &extCount, &extensions.front()) == VK_SUCCESS)
+		{
+			for (VkExtensionProperties extension : extensions)
+			{
+				supportedInstanceExtensions.push_back(extension.extensionName);
+			}
+		}
+	}
 
+	// Enabled requested instance extensions
+	if (enabledInstanceExtensions.size() > 0)
+	{
+		for (const char* enabledExtension : enabledInstanceExtensions)
+		{
+			// check if requested extension is available
+			if (std::find(supportedInstanceExtensions.begin(), supportedInstanceExtensions.end(), enabledExtension) == supportedInstanceExtensions.end())
+			{
+				std::cerr << "Required instance extension \"" << enabledExtension << "\" is not present at instance level!" << std::endl;
+			}
+			else {
+				instanceExtensions.push_back(enabledExtension);
+			}
+		}
+	}
+
+	// create info
+	VkInstanceCreateInfo instanceCreateInfo = {};
+	instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+	instanceCreateInfo.pNext = NULL;
+	instanceCreateInfo.pApplicationInfo = &appInfo;
+
+	// TODO: Enable the debug utils extension if supportd
+
+
+	if (instanceExtensions.size() > 0)
+	{
+		instanceCreateInfo.enabledExtensionCount = (uint32_t)instanceExtensions.size();
+		instanceCreateInfo.ppEnabledExtensionNames = instanceExtensions.data();
+	}
+
+	// Note: VK_LAYER_KHRONOS_validation contains all current validation functionality.
+	// Insatance layer property
+	const char* validationLayerName = "VK_LAYER_KHRONOS_validation";
+	if (settings.validation)
+	{
+		// Check if this layer is available at instance level
+		uint32_t instanceLayerCount;
+		vkEnumerateInstanceLayerProperties(&instanceLayerCount, nullptr);	// enum layer count first.
+		std::vector<VkLayerProperties> instancelayerProperties(instanceLayerCount);	// retain property space
+		vkEnumerateInstanceLayerProperties(&instanceLayerCount, instancelayerProperties.data());
+		bool validationLayerPresent = false;
+		for (VkLayerProperties layer : instancelayerProperties) {
+			if (strcmp(layer.layerName, validationLayerName) == 0) {
+				validationLayerPresent = true;
+				break;
+			}
+		}
+		if (validationLayerPresent) {
+			instanceCreateInfo.ppEnabledLayerNames = &validationLayerName;
+			instanceCreateInfo.enabledLayerCount = 1;
+		}
+		else {
+			std::cerr << "Validation layer VK_LAYER_KHRONOS_validation not present, validation is disabled";
+		}
+	}
+	VkResult result = vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
+
+	// TODO: set up debug functions
+	if (result != VK_SUCCESS) return false;
 	// ~create Vulkan instance
+
+	return true;
 }
 

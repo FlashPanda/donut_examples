@@ -113,6 +113,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 int main(int __argc, const char** __argv)
 #endif
 {
-
+    tinyrhi::vulkan::initVulkan();
     return 0;
 }
