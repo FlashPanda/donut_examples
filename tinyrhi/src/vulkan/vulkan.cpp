@@ -30,6 +30,14 @@ namespace tinyrhi::vulkan
 
 	// Vulkan instance, stores all per-application states
 	VkInstance instance;
+	// Physical device (GPU) that Vulkan will use
+	VkPhysicalDevice physicalDevice;
+	// Stores physical device properties (for e.g. checking device limits)
+	VkPhysicalDeviceProperties deviceProperties;
+	// Stores the features available on the selected physical device (for e.g. checking if a feature is available)
+	VkPhysicalDeviceFeatures deviceFeatures;
+	// Stores all available memory (type) properties for the physical device
+	VkPhysicalDeviceMemoryProperties deviceMemoryProperties;
 }
 
 bool tinyrhi::vulkan::initVulkan()
@@ -124,11 +132,50 @@ bool tinyrhi::vulkan::initVulkan()
 			std::cerr << "Validation layer VK_LAYER_KHRONOS_validation not present, validation is disabled";
 		}
 	}
-	VkResult result = vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
+	err = vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
 
 	// TODO: set up debug functions
-	if (result != VK_SUCCESS) return false;
+	if (err != VK_SUCCESS) return false;
 	// ~create Vulkan instance
+
+	// TODO: debugging request
+
+	/** Create logical device */
+	// Physical device count
+	uint32_t gpuCount = 0;
+	// Get number of available physical devices
+	{
+		VkResult result = vkEnumeratePhysicalDevices(instance, &gpuCount, nullptr);
+		if (result != VK_SUCCESS)
+		{
+			std::cerr << "Failed to enumerate physical devices!" << std::endl;
+			return false;
+		}
+	}
+	if (gpuCount == 0) {
+		std::cerr << "No device with Vulkan support found" << std::endl;
+		return false;
+	}
+
+	// Get physical devices
+	std::vector<VkPhysicalDevice> physicalDevices(gpuCount);
+	err = vkEnumeratePhysicalDevices(instance, &gpuCount, physicalDevices.data());
+	if (err != VK_SUCCESS) {
+		std::cerr << "Can not get physical devices' info." << std::endl;
+		return false;
+	}
+
+	// we will use this first physical device
+	physicalDevice = physicalDevices[0];
+
+	// Get device properties
+	vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
+	// Get device features
+	vkGetPhysicalDeviceFeatures(physicalDevice, &deviceFeatures);
+	// Get device memory properties
+	vkGetPhysicalDeviceMemoryProperties(physicalDevice, &deviceMemoryProperties);
+
+	/** ~Create Logical device */
 
 	return true;
 }

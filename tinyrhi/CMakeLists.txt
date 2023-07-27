@@ -17,9 +17,13 @@ if (NOT Vulkan_FOUND)
 endif()
 
 set(include_vk
-	include/tinyrhi/vulkan.h)
+	include/tinyrhi/vulkan.h
+	include/tinyrhi/vulkan-device.h
+	)
 set(src_vk
-	src/vulkan/vulkan.cpp)
+	src/vulkan/vulkan.cpp
+	src/vulkan/vulkan-device.cpp
+	)
 	
 # vulkan
 set (tinyrhi_vulkan_target tinyrhi_vk)
