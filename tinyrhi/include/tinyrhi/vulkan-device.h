@@ -22,7 +22,7 @@ namespace tinyrhi::vulkan
 		VkPhysicalDeviceMemoryProperties memoryProperties;
 		/** Queue family properties of the physical device */
 		std::vector<VkQueueFamilyProperties> queueFamilyProperties;
-		/** extensions supported by the device */
+		/** extensions supported by the device, similar to instance extensions */
 		std::vector<std::string> supportedExtensions;
 
 		VulkanDevice(VkPhysicalDevice inPhysicalDevice);

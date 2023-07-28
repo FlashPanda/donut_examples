@@ -5,6 +5,7 @@
 #include <windows.h>
 #include "vulkan/vulkan_win32.h"
 #include <iostream>
+#include "tinyrhi/vulkan-device.h"
 
 namespace tinyrhi::vulkan
 {
@@ -38,6 +39,9 @@ namespace tinyrhi::vulkan
 	VkPhysicalDeviceFeatures deviceFeatures;
 	// Stores all available memory (type) properties for the physical device
 	VkPhysicalDeviceMemoryProperties deviceMemoryProperties;
+
+	// Device abstraction. Typically a logical device, with physical device infomation in it.
+	tinyrhi::vulkan::VulkanDevice* vulkanDevice;
 }
 
 bool tinyrhi::vulkan::initVulkan()
@@ -174,6 +178,12 @@ bool tinyrhi::vulkan::initVulkan()
 	vkGetPhysicalDeviceFeatures(physicalDevice, &deviceFeatures);
 	// Get device memory properties
 	vkGetPhysicalDeviceMemoryProperties(physicalDevice, &deviceMemoryProperties);
+
+	// Create Vulkan device. This is an abstraction of device, which can be used for hide device creation.
+	// We can use Vulkan to create device, as well as DirextX 12.
+	vulkanDevice = new tinyrhi::vulkan::VulkanDevice(physicalDevice);
+
+	
 
 	/** ~Create Logical device */
 
