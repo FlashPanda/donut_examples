@@ -1,11 +1,9 @@
 #include "tinyrhi/vulkan.h"
-#include "vulkan/vulkan_core.h"
 #include <string>
 #include <vector>
 #include <windows.h>
-#include "vulkan/vulkan_win32.h"
 #include <iostream>
-#include "tinyrhi/vulkan-device.h"
+#include "tinyrhi/vulkan-swapchain.h"
 
 namespace tinyrhi::vulkan
 {
@@ -20,6 +18,8 @@ namespace tinyrhi::vulkan
 		/** Enable UI overlay */
 		bool overlay = true;
 	}settings;
+
+
 
 	std::string title = "Vulkan Example";
 	std::string name = "triangle";
@@ -42,6 +42,18 @@ namespace tinyrhi::vulkan
 
 	// Device abstraction. Typically a logical device, with physical device infomation in it.
 	tinyrhi::vulkan::VulkanDevice* vulkanDevice;
+
+	/** Logical device, application's view of the physical device (GPU) */
+	VkDevice device;
+
+	// Handle to the device graphics queue that command buffers are submitted to
+	VkQueue queue;
+
+	// Depth buffer format (selected during Vulkan initialization)
+	VkFormat depthFormat;
+
+	// Wraps the swap chain to present images (framebuffers) to the windowing system
+	VulkanSwapChain swapChain;
 }
 
 bool tinyrhi::vulkan::initVulkan()
@@ -183,10 +195,44 @@ bool tinyrhi::vulkan::initVulkan()
 	// We can use Vulkan to create device, as well as DirextX 12.
 	vulkanDevice = new tinyrhi::vulkan::VulkanDevice(physicalDevice);
 
-	
-
 	/** ~Create Logical device */
+
+	device = vulkanDevice->logicalDevice;
+
+	vkGetDeviceQueue(device, vulkanDevice->queueFamilyIndices.graphics, 0, &queue);
+
+	// Find a suitable depth and/or stencial format
+	VkBool32 validFormat{ false };
+	validFormat = getSupportedDepthFormat(physicalDevice, depthFormat);
+	assert(validFormat);
+
+	swapChain.connect(instance, physicalDevice, device);
 
 	return true;
 }
 
+VkBool32 tinyrhi::vulkan::getSupportedDepthFormat(VkPhysicalDevice physicalDevice, VkFormat* depthFormat)
+{
+	// Since all depth formats may be optional, we need to find a suitable depth format to use
+	// Start with the highest precision packed format
+	std::vector<VkFormat> formatList = {
+		VK_FORMAT_D32_SFLOAT_S8_UINT,
+		VK_FORMAT_D32_SFLOAT,
+		VK_FORMAT_D24_UNORM_S8_UINT,
+		VK_FORMAT_D16_UNORM_S8_UINT,
+		VK_FORMAT_D16_UNORM
+	};
+
+	for (auto& format : formatList)
+	{
+		VkFormatProperties formatProps;
+		vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &formatProps);
+		if (formatProps.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)
+		{
+			*depthFormat = format;
+			return true;
+		}
+	}
+
+	return false;
+}

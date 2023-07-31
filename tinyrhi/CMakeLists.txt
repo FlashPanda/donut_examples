@@ -19,10 +19,12 @@ endif()
 set(include_vk
 	include/tinyrhi/vulkan.h
 	include/tinyrhi/vulkan-device.h
+	include/tinyrhi/vulkan-swapchain.h
 	)
 set(src_vk
 	src/vulkan/vulkan.cpp
 	src/vulkan/vulkan-device.cpp
+	src/vulkan/vulkan-swapchain.cpp
 	)
 	
 # vulkan
