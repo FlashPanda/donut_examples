@@ -37,6 +37,7 @@ add_library(${tinyrhi_vulkan_target} STATIC
 set_target_properties(${tinyrhi_vulkan_target} PROPERTIES FOLDER "TINYRHI")
 target_include_directories(${tinyrhi_vulkan_target} PRIVATE include)
 target_include_directories(${tinyrhi_vulkan_target} PRIVATE ${Vulkan_INCLUDE_DIR})
+#target_include_directories(${tinyrhi_vulkan_target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/donut/thirdparty/glfw/include)
 
 if(WIN32)
 	target_compile_definitions(${tinyrhi_vulkan_target} PRIVATE 
@@ -44,6 +45,7 @@ if(WIN32)
 			NOMINMAX)
 endif()
 target_link_libraries(${tinyrhi_vulkan_target} ${Vulkan_LIBRARY})
+target_link_libraries(${tinyrhi_vulkan_target}  glfw)
 	
 # install
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/tinyrhi

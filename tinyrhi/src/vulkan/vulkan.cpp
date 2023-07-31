@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <iostream>
 #include "tinyrhi/vulkan-swapchain.h"
+#include "GLFW/glfw3.h"
 
 namespace tinyrhi::vulkan
 {
@@ -18,6 +19,7 @@ namespace tinyrhi::vulkan
 		/** Enable UI overlay */
 		bool overlay = true;
 	}settings;
+
 
 
 
@@ -54,6 +56,8 @@ namespace tinyrhi::vulkan
 
 	// Wraps the swap chain to present images (framebuffers) to the windowing system
 	VulkanSwapChain swapChain;
+
+	GLFWwindow* m_Window = nullptr;
 }
 
 bool tinyrhi::vulkan::initVulkan()
@@ -236,3 +240,54 @@ VkBool32 tinyrhi::vulkan::getSupportedDepthFormat(VkPhysicalDevice physicalDevic
 
 	return false;
 }
+
+static void ErrorCallback_GLFW(int error, const char* description)
+{
+	fprintf(stderr, "GLFW error: %s\n", description);
+	exit(1);
+}
+
+bool tinyrhi::vulkan::createWindow()
+{
+	if (!glfwInit())
+	{
+		return false;
+	}
+
+	glfwSetErrorCallback(ErrorCallback_GLFW);
+
+	glfwDefaultWindowHints();
+
+	glfwWindowHint(GLFW_RED_BITS, 8);
+	glfwWindowHint(GLFW_GREEN_BITS, 8);
+	glfwWindowHint(GLFW_BLUE_BITS, 8);
+	glfwWindowHint(GLFW_ALPHA_BITS, 8);
+	glfwWindowHint(GLFW_DEPTH_BITS, 24);
+	glfwWindowHint(GLFW_STENCIL_BITS, 8);
+
+	glfwWindowHint(GLFW_SAMPLES, 1);
+	glfwWindowHint(GLFW_REFRESH_RATE, 0);
+
+	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+
+	glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);   // Ignored for fullscreen
+
+	m_Window = glfwCreateWindow(1280, 720,
+		"Basic triangle ",
+		nullptr,
+		nullptr);
+
+
+	if (m_Window == nullptr)
+	{
+		return false;
+	}
+
+	//glfwSetWindowUserPointer(m_Window, this);
+}
+
+bool tinyrhi::vulkan::createSwapChain()
+{
+
+}
+

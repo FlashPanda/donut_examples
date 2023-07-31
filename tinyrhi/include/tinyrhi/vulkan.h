@@ -7,5 +7,10 @@ namespace tinyrhi::vulkan
 {
 	bool initVulkan();
 
+	// We need a window to connect to swap chain, which we will create with glfw.
+	bool createWindow();
+
+	bool createSwapChain();
+
 	VkBool32 getSupportedDepthFormat(VkPhysicalDevice physicalDevice, VkFormat* depthFormat);
 }
