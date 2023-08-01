@@ -13,4 +13,7 @@ namespace tinyrhi::vulkan
 	bool createSwapChain();
 
 	VkBool32 getSupportedDepthFormat(VkPhysicalDevice physicalDevice, VkFormat* depthFormat);
+
+
+	void destroySwapChain();
 }

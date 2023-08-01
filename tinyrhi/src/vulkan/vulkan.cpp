@@ -58,6 +58,7 @@ namespace tinyrhi::vulkan
 	VulkanSwapChain swapChain;
 
 	GLFWwindow* m_Window = nullptr;
+
 }
 
 bool tinyrhi::vulkan::initVulkan()
@@ -210,7 +211,13 @@ bool tinyrhi::vulkan::initVulkan()
 	validFormat = getSupportedDepthFormat(physicalDevice, depthFormat);
 	assert(validFormat);
 
-	swapChain.connect(instance, physicalDevice, device);
+	swapChain.set(instance, physicalDevice, device);
+
+	// create window
+	createWindow();
+
+	// create swap chain
+	createSwapChain();
 
 	return true;
 }
@@ -289,5 +296,24 @@ bool tinyrhi::vulkan::createWindow()
 bool tinyrhi::vulkan::createSwapChain()
 {
 
+	swapChain.initSurface(m_Window);
+
+
+
+	glfwShowWindow(m_Window);
+
+	// TODO: update window size
+	// Acturally, window operations are not swap chain related operations, 
+	// So, consider moving it into another function.
 }
 
+void tinyrhi::vulkan::destroySwapChain()
+{
+	if (vulkanDevice)
+		vkDeviceWaitIdle(*vulkanDevice);
+
+	if (swapChain)
+	{
+		vkDestroySwapchainKHR(*vulkanDevice, swapChain, nullptr);
+	}
+}
