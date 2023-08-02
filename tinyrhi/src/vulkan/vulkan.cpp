@@ -59,6 +59,8 @@ namespace tinyrhi::vulkan
 
 	GLFWwindow* m_Window = nullptr;
 
+	// Command buffers used for rendering
+	std::vector<VkCommandBuffer> drawCmdBuffers;
 }
 
 bool tinyrhi::vulkan::initVulkan()
@@ -298,7 +300,9 @@ bool tinyrhi::vulkan::createSwapChain()
 
 	swapChain.initSurface(m_Window);
 
-
+	uint32_t width = 1280;
+	uint32_t height = 720;
+	swapChain.create(&width, &height, false, false);
 
 	glfwShowWindow(m_Window);
 
@@ -316,4 +320,9 @@ void tinyrhi::vulkan::destroySwapChain()
 	{
 		vkDestroySwapchainKHR(*vulkanDevice, swapChain, nullptr);
 	}
+}
+
+void tinyrhi::vulkan::createCommandBuffers()
+{
+
 }

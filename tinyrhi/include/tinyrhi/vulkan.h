@@ -12,6 +12,8 @@ namespace tinyrhi::vulkan
 
 	bool createSwapChain();
 
+	void createCommandBuffers();
+
 	VkBool32 getSupportedDepthFormat(VkPhysicalDevice physicalDevice, VkFormat* depthFormat);
 
 
