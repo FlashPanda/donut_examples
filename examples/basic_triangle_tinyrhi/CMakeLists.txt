@@ -36,8 +36,10 @@ donut_compile_shaders_all_platforms(
 
 add_executable(${project} WIN32 ${sources})
 target_include_directories(${project} PRIVATE ${CMAKE_SOURCE_DIR}/tinyrhi/include)
+target_include_directories(${project} PRIVATE ${Vulkan_INCLUDE_DIR})
 target_link_libraries(${project} donut_app donut_engine)
 target_link_libraries(${project} tinyrhi_vk)
+target_link_libraries(${project} glfw )
 add_dependencies(${project} ${project}_shaders)
 set_target_properties(${project} PROPERTIES FOLDER ${folder})
 

@@ -26,86 +26,47 @@
 #include <donut/core/log.h>
 #include <donut/core/vfs/VFS.h>
 #include <nvrhi/utils.h>
-#include <tinyrhi/vulkan.h>
+//#include <tinyrhi/vulkan.h>
+#include <vulkan/vulkan.h>
+#include <GLFW/glfw3.h>
 
-using namespace donut;
+GLFWwindow* window = nullptr;
+const int32_t WIDTH = 1280;
+const int32_t HEIGHT = 720;
 
-static const char* g_WindowTitle = "Donut Example: Basic Triangle";
-
-class BasicTriangle : public app::IRenderPass
+void InitWindow()
 {
-private:
-    nvrhi::ShaderHandle m_VertexShader;
-    nvrhi::ShaderHandle m_PixelShader;
-    nvrhi::GraphicsPipelineHandle m_Pipeline;
-    nvrhi::CommandListHandle m_CommandList;
+    // 初始化
+    glfwInit();
 
-public:
-    using IRenderPass::IRenderPass;
+    // GLFW原来为为了OpenGL设计的，所以需要显示的设置组织启动OpenGL上下文
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    // 禁止窗口大小的改变
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    // 创建窗口，获得窗口句柄
+    window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan Triangle", nullptr, nullptr);
+}
 
-    bool Init()
-    {
-        std::filesystem::path appShaderPath = app::GetDirectoryWithExecutable() / "shaders/basic_triangle" /  app::GetShaderTypeName(GetDevice()->getGraphicsAPI());
-        
-        auto nativeFS = std::make_shared<vfs::NativeFileSystem>();
-        engine::ShaderFactory shaderFactory(GetDevice(), nativeFS, appShaderPath);
+void InitVulkan()
+{
 
-        m_VertexShader = shaderFactory.CreateShader("shaders.hlsl", "main_vs", nullptr, nvrhi::ShaderType::Vertex);
-        m_PixelShader = shaderFactory.CreateShader("shaders.hlsl", "main_ps", nullptr, nvrhi::ShaderType::Pixel);
+}
 
-        if (!m_VertexShader || !m_PixelShader)
-        {
-            return false;
-        }
-        
-        m_CommandList = GetDevice()->createCommandList();
-
-        return true;
+void MainLoop()
+{
+    while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
     }
+}
 
-    void BackBufferResizing() override
-    { 
-        m_Pipeline = nullptr;
-    }
+void Cleanup()
+{
+    // 销毁窗口
+    glfwDestroyWindow(window);
 
-    void Animate(float fElapsedTimeSeconds) override
-    {
-        GetDeviceManager()->SetInformativeWindowTitle(g_WindowTitle);
-    }
-    
-    void Render(nvrhi::IFramebuffer* framebuffer) override
-    {
-        if (!m_Pipeline)
-        {
-            nvrhi::GraphicsPipelineDesc psoDesc;
-            psoDesc.VS = m_VertexShader;
-            psoDesc.PS = m_PixelShader;
-            psoDesc.primType = nvrhi::PrimitiveType::TriangleList;
-            psoDesc.renderState.depthStencilState.depthTestEnable = false;
-
-            m_Pipeline = GetDevice()->createGraphicsPipeline(psoDesc, framebuffer);
-        }
-
-        m_CommandList->open();
-
-        nvrhi::utils::ClearColorAttachment(m_CommandList, framebuffer, 0, nvrhi::Color(0.f));
-
-        nvrhi::GraphicsState state;
-        state.pipeline = m_Pipeline;
-        state.framebuffer = framebuffer;
-        state.viewport.addViewportAndScissorRect(framebuffer->getFramebufferInfo().getViewport());
-
-        m_CommandList->setGraphicsState(state);
-
-        nvrhi::DrawArguments args;
-        args.vertexCount = 3;
-        m_CommandList->draw(args);
-
-        m_CommandList->close();
-        GetDevice()->executeCommandList(m_CommandList);
-    }
-
-};
+    // 终止glfw
+    glfwTerminate();
+}
 
 #ifdef WIN32
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
@@ -113,6 +74,23 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 int main(int __argc, const char** __argv)
 #endif
 {
-    tinyrhi::vulkan::initVulkan();
+    // 一、实例
+    // 实例可以看成是Vulkan API本身
+    // 涉及概念：Instance，实例扩展、层
+
+    // 二、逻辑设备
+    // 逻辑设备可以看成是我们操作的物理设备的一个程序抽象，我们的操作只能对逻辑设备进行操作
+    // 创建逻辑设备需要用到物理设备，所以需要查询物理设备的属性，而查询则需要上一步中的实例。
+    // 涉及概念：物理设备（设备属性、功能、内存属性、队列族、设备扩展）
+
+    // 命令池，命令队列
+
+    InitWindow();
+
+    InitVulkan();
+
+    MainLoop();
+
+    Cleanup();
     return 0;
 }
