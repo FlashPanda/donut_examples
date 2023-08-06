@@ -30,11 +30,28 @@
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 
-GLFWwindow* window = nullptr;
-const int32_t WIDTH = 1280;
-const int32_t HEIGHT = 720;
 
-void InitWindow()
+class DeviceManager_Vulkan
+{
+public:
+	GLFWwindow* window = nullptr;
+	const int32_t WIDTH = 1280;
+	const int32_t HEIGHT = 720;
+
+public:
+    void InitWindow();
+    void InitVulkan();
+    void MainLoop();
+
+    void Cleanup();
+
+    void createInstance();
+
+private:
+    VkInstance instance;
+};
+
+void DeviceManager_Vulkan::InitWindow()
 {
     // 初始化
     glfwInit();
@@ -47,19 +64,19 @@ void InitWindow()
     window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan Triangle", nullptr, nullptr);
 }
 
-void InitVulkan()
+void DeviceManager_Vulkan::InitVulkan()
 {
-
+    createInstance();
 }
 
-void MainLoop()
+void DeviceManager_Vulkan::MainLoop()
 {
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
     }
 }
 
-void Cleanup()
+void DeviceManager_Vulkan::Cleanup()
 {
     // 销毁窗口
     glfwDestroyWindow(window);
@@ -85,12 +102,14 @@ int main(int __argc, const char** __argv)
 
     // 命令池，命令队列
 
-    InitWindow();
+    DeviceManager_Vulkan device;
+	
+    device.InitWindow();
 
-    InitVulkan();
+    device.InitVulkan();
 
-    MainLoop();
+    device.MainLoop();
 
-    Cleanup();
+    device.Cleanup();
     return 0;
 }
