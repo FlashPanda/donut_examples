@@ -57,6 +57,16 @@ VkResult CreateDebugUtilsMessagerExt(VkInstance instance,
     }
 }
 
+void DestroyDebugUtilsMessengerExt(VkInstance instance,
+    VkDebugUtilsMessengerEXT debugMessenger,
+    const VkAllocationCallbacks* pAllocator)
+{
+	auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+	if (func != nullptr) {
+		func(instance, debugMessenger, pAllocator);
+	}
+}
+
 class DeviceManager_Vulkan
 {
 public:
@@ -147,6 +157,9 @@ void DeviceManager_Vulkan::MainLoop()
 
 void DeviceManager_Vulkan::Cleanup()
 {
+    if (enableValidationLayers)
+        DestroyDebugUtilsMessengerExt(instance, debugMessenger, nullptr);
+
     // destroy the instance
     vkDestroyInstance(instance, nullptr);
 
