@@ -40,6 +40,7 @@ target_include_directories(${project} PRIVATE ${Vulkan_INCLUDE_DIR})
 target_link_libraries(${project} donut_app donut_engine)
 #target_link_libraries(${project} tinyrhi_vk)
 target_link_libraries(${project} glfw )
+target_link_libraries(${project} ${Vulkan_LIBRARY})
 add_dependencies(${project} ${project}_shaders)
 set_target_properties(${project} PROPERTIES FOLDER ${folder})
 

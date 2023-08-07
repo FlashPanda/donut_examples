@@ -30,6 +30,11 @@
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 
+#ifdef NDEBUG
+const bool enableValidationLayers = false;
+#else 
+const bool enableValidationLayers = true;
+#endif
 
 class DeviceManager_Vulkan
 {
@@ -46,6 +51,10 @@ public:
     void Cleanup();
 
     void createInstance();
+
+    bool checkValidationLayerSupport();
+
+    std::vector<const char*> getRequiredExtensions();
 
 private:
     VkInstance instance;
@@ -78,11 +87,93 @@ void DeviceManager_Vulkan::MainLoop()
 
 void DeviceManager_Vulkan::Cleanup()
 {
-    // Ïú»Ù´°¿Ú
+    // destroy the instance
+    vkDestroyInstance(instance, nullptr);
+
+    // destroy the window
     glfwDestroyWindow(window);
 
-    // ÖÕÖ¹glfw
+    // glfw termination
     glfwTerminate();
+}
+
+void DeviceManager_Vulkan::createInstance()
+{
+    if (enableValidationLayers && !checkValidationLayerSupport()) {
+        throw std::runtime_error("validation layers requested, but not avaliable!");
+    }
+
+    // App info
+    VkApplicationInfo appInfo = {};
+    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    appInfo.pApplicationName = "Hello Triangle";
+    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.apiVersion = VK_API_VERSION_1_0;
+
+    // Instance create info
+    VkInstanceCreateInfo instanceCreateInfo = {};
+    instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    instanceCreateInfo.pApplicationInfo = &appInfo;     // App info we created before.
+
+    // Extensions
+    auto extensions = getRequiredExtensions();
+	instanceCreateInfo.enabledExtensionCount = extensions.size();
+	instanceCreateInfo.ppEnabledExtensionNames = extensions.data();
+
+    // validation layers, controlled by a boolean variant.
+    VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo = {};
+    if (enableValidationLayers)
+    {
+        instanceCreateInfo.enabledLayerCount = extensions.size();
+    }
+    else
+    {
+    }
+    instanceCreateInfo.enabledLayerCount = 0;
+    instanceCreateInfo.ppEnabledLayerNames = nullptr;
+
+    // We can create instance now!
+    VkResult result = vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
+    if (result != VK_SUCCESS)
+    {
+        throw std::runtime_error("failed to create vulkan instance!");
+    }
+
+    // Enumerate insatance extensions.
+    uint32_t extensionCount = 0;
+    vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
+    std::vector<VkExtensionProperties> extensions(extensionCount);
+    vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
+    // Output to log
+    donut::log::info("available extensions");
+    for (const auto& ext : extensions)
+    {
+        donut::log::info(ext.extensionName);
+    }
+}
+
+bool DeviceManager_Vulkan::checkValidationLayerSupport()
+{
+    uint32_t layerCount;
+    vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+
+}
+
+std::vector<const char*> DeviceManager_Vulkan::getRequiredExtensions()
+{
+	uint32_t glfwExtensionCount = 0;
+	const char** glfwExtensions;
+	glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+	std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+
+	if (enableValidationLayers) 
+    {
+		extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    }
+
+	return extensions;
 }
 
 #ifdef WIN32
