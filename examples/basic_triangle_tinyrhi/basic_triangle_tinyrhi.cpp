@@ -152,6 +152,29 @@ public:
         {
             throw std::runtime_error("failed to find a suitable GPU!");
         }
+
+        assert(queueFamilyIndice != -1);
+
+        /** 1. device queue */
+        // We need create a device queue. 
+        // So, we have to get queue family indice.
+        VkDeviceQueueCreateInfo queueCreateInfo = {};
+        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.queueFamilyIndex = queueFamilyIndice;
+        queueCreateInfo.queueCount = 1;
+        float queuePriority = 1.f;
+        queueCreateInfo.pQueuePriorities = &queuePriority;  // We need to explicit set queue priority, no matter how many queues we create.
+
+        /** 2. devie features */
+        VkPhysicalDeviceFeatures deviceFeatures = {};
+
+        /** Device create */
+        VkDeviceCreateInfo createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+
+        // Set queue create infos. 1, by now.
+        createInfo.pQueueCreateInfos = &queueCreateInfo;
+        createInfo.queueCreateInfoCount = 1;
     }
 
     bool isDeviceSuitable(VkPhysicalDevice device)
@@ -163,16 +186,22 @@ public:
 		std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
 		vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
 
+        int32_t i = -1;
 		for (const auto& queueFamily : queueFamilies) {
+            ++i;
 			if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+                queueFamilyIndice = i;
                 return true;
 			}
 		}
+        
         return false;
     }
 private:
     VkInstance instance;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+    VkDevice device;
+    int32_t queueFamilyIndice = -1;
 };
 
 void DeviceManager_Vulkan::InitWindow()
@@ -193,6 +222,8 @@ void DeviceManager_Vulkan::InitVulkan()
     createInstance();
 
     setupDebugCallback();
+
+    createDevice();
 }
 
 void DeviceManager_Vulkan::MainLoop()
