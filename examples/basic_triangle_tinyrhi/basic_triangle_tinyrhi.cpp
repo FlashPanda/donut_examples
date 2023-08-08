@@ -29,6 +29,7 @@
 //#include <tinyrhi/vulkan.h>
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
+#include <set>
 
 #ifdef NDEBUG
 const bool enableValidationLayers = false;
@@ -38,6 +39,10 @@ const bool enableValidationLayers = true;
 
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
+};
+
+const std::vector<const char*> deviceExtensions = {
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
 
 // Wrap Vk function
@@ -197,15 +202,17 @@ public:
         VkDeviceCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 
-        // Set queue create infos. 1, by now.
+        // Set queue create infos. 
         createInfo.pQueueCreateInfos = queueCreateInfos.data();
         createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
 
         // Set device features
         createInfo.pEnabledFeatures = &deviceFeatures;
 
-        // We use validation layer to instead.
-        createInfo.enabledExtensionCount = 0;
+        
+        createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+        createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+
         if (enableValidationLayers)
         {
             createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
@@ -239,20 +246,28 @@ public:
             ++i;
 			if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
                 queueFamilyIndices.graphics = i;
-			}
+            }
 
-			VkBool32 presentSupport = false;
-			vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
+            VkBool32 presentSupport = false;
+            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
 
-			if (presentSupport)
-			{
-				queueFamilyIndices.present = i;     // Usually, present index will be the same as graphics index.
-			}
+            if (presentSupport)
+            {
+                queueFamilyIndices.present = i;     // Usually, present index will be the same as graphics index.
+            }
 
             if (queueFamilyIndices.graphics != -1 && queueFamilyIndices.present != -1)
-                return true;
-		}
-        
+            {
+                if (checkDeviceExtensionSupport(device))
+                {
+                    bool swapChainAdequate = false;
+                    SwapChainSupportDetails swapChainSupport = getSwapChainSupport(device);
+                    swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
+                    return swapChainAdequate;
+                }
+            }
+        }
+
         return false;
     }
 
@@ -261,6 +276,111 @@ public:
         if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS)
         {
             throw std::runtime_error("failed to create window surface!");
+        }
+    }
+    bool checkDeviceExtensionSupport(VkPhysicalDevice device)
+    {
+        uint32_t extensionCount;
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+
+        std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
+
+        std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
+
+        for (const auto& extension : availableExtensions)
+        {
+            requiredExtensions.erase(extension.extensionName);
+        }
+        return requiredExtensions.empty();
+    }
+
+    // I think there is no need to save this. 
+    // We only need to create a suitable one.
+    struct SwapChainSupportDetails
+    {
+        VkSurfaceCapabilitiesKHR capabilities;
+        std::vector<VkSurfaceFormatKHR> formats;
+        std::vector<VkPresentModeKHR> presentModes;
+    };
+
+    // swap chain is supported by physical device
+    SwapChainSupportDetails getSwapChainSupport(VkPhysicalDevice device)
+    {
+        SwapChainSupportDetails details;
+
+        // base surface capabilities
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
+
+        // format supported by surface
+        uint32_t formatCount = 0;
+        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
+
+        if (formatCount > 0)
+        {
+            details.formats.resize(formatCount);
+            vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
+        }
+
+        // present mode supported by surface
+        uint32_t presentModeCount = 0;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+
+        if (presentModeCount > 0)
+        {
+            details.presentModes.resize(presentModeCount);
+            vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
+        }
+
+        return details;
+    }
+
+    VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats)
+    {
+        if (availableFormats.size() == 1 && availableFormats[0].format == VK_FORMAT_UNDEFINED)
+        {
+            return { VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
+        }
+
+        for (const auto& availableFormat : availableFormats)
+        {
+            if (availableFormat.format == VK_FORMAT_B8G8R8A8_UNORM &&
+                availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+            {
+                return availableFormat;
+            }
+        }
+
+        if (availableFormats.size() >= 1)
+        {
+            return availableFormats[0];
+        }
+
+        throw std::runtime_error("failed to choose an format!");
+    }
+
+    // Finding the Triple Buffering Presentation Mode
+    VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR> availablePresentModes)
+    {
+        for (const auto& availablePresentMode : availablePresentModes)
+        {
+            if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
+                return availablePresentMode;
+        }
+        return VK_PRESENT_MODE_FIFO_KHR;
+    }
+
+    // choose swap extent
+    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities)
+    {
+        if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
+        {
+            return capabilities.currentExtent;
+        }
+        else
+        {
+            VkExtent2D actualExtent = { WIDTH, HEIGHT };
+            actualE
         }
     }
 private:
