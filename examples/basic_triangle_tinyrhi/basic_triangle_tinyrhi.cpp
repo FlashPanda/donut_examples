@@ -484,6 +484,11 @@ public:
             }
         }
     }
+
+    void createGraphicsPipeline()
+    {
+
+    }
 private:
     VkInstance instance;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
@@ -524,6 +529,8 @@ void DeviceManager_Vulkan::InitVulkan()
     createSwapChain();
 
     createImageViews();
+
+    createGraphicsPipeline();
 }
 
 void DeviceManager_Vulkan::MainLoop()
