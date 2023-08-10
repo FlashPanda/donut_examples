@@ -742,6 +742,51 @@ public:
             }
         }
     }
+
+    void createCommandPool()
+    {
+        VkCommandPoolCreateInfo poolInfo = {};
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.queueFamilyIndex = queueFamilyIndices.graphics;
+        poolInfo.flags = 0;
+
+        if (vkCreateCommandPool(device, &poolInfo, nullptr,
+            &commandpool) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to create command pool!");
+        }
+    }
+
+    void createCommandBuffers()
+    {
+        commandBuffers.resize(swapChainFramebuffers.size());
+
+        VkCommandBufferAllocateInfo allocInfo = {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = commandpool;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
+
+        if (vkAllocateCommandBuffers(device, &allocInfo,
+            commandBuffers.data()) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to allocate command buffers!");
+        }
+
+        // begin to record commands
+        for (size_t i = 0; i < commandBuffers.size(); ++i)
+        {
+            VkCommandBufferBeginInfo beginInfo = {};
+            beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
+            beginInfo.pInheritanceInfo = nullptr;
+            
+            if (vkBeginCommandBuffer(commandBuffers[i], &beginInfo) != VK_SUCCESS)
+            {
+                throw std::runtime_error("failed to begin recording command buffer!");
+            }
+        }
+    }
 private:
     VkInstance instance;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
@@ -758,6 +803,9 @@ private:
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
     std::vector<VkFramebuffer> swapChainFramebuffers;
+
+    VkCommandPool commandpool;
+    std::vector<VkCommandBuffer> commandBuffers;
 };
 
 void DeviceManager_Vulkan::InitWindow()
@@ -792,6 +840,10 @@ void DeviceManager_Vulkan::InitVulkan()
     createGraphicsPipeline();
 
     createFramebuffers();
+
+    createCommandPool();
+
+    createCommandBuffers();
 }
 
 void DeviceManager_Vulkan::MainLoop()
@@ -803,6 +855,8 @@ void DeviceManager_Vulkan::MainLoop()
 
 void DeviceManager_Vulkan::Cleanup()
 {
+    vkDestroyCommandPool(device, commandpool, nullptr);
+
     for (auto framebuffer : swapChainFramebuffers)
     {
         vkDestroyFramebuffer(device, framebuffer, nullptr);
