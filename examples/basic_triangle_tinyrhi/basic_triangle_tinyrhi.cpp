@@ -32,11 +32,11 @@
 #include <set>
 #include <fstream>
 
-#ifdef NDEBUG
+//#ifdef NDEBUG
 const bool enableValidationLayers = false;
-#else 
-const bool enableValidationLayers = true;
-#endif
+//#else 
+//const bool enableValidationLayers = true;
+//#endif
 
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
@@ -202,6 +202,7 @@ public:
         }
 
         // present queue
+        if (queueFamilyIndices.graphics != queueFamilyIndices.present)
         {
 			VkDeviceQueueCreateInfo queueCreateInfo = {};
 			queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -505,8 +506,8 @@ public:
 
     void createGraphicsPipeline()
     {
-        auto vertShaderCode = readFile("../examples/basic_triangle_tinyrhi/shaders/vert.spv");
-        auto fragShaderCode = readFile("../examples/basic_triangle_tinyrhi/shaders/frag.spv");
+        auto vertShaderCode = readFile("../../../examples/basic_triangle_tinyrhi/shaders/vert.spv");
+        auto fragShaderCode = readFile("../../../examples/basic_triangle_tinyrhi/shaders/frag.spv");
 
         VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
         VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
@@ -665,6 +666,7 @@ public:
     {
         VkShaderModuleCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = code.size();
         createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
 
         VkShaderModule shaderModule;
@@ -1007,7 +1009,7 @@ void DeviceManager_Vulkan::createInstance()
     // App info
     VkApplicationInfo appInfo = {};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Hello Triangle";
+    appInfo.pApplicationName = "Hello Triangle TINYRHI";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "No Engine";
