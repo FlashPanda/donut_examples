@@ -400,7 +400,11 @@ public:
         }
         else
         {
-            VkExtent2D actualExtent = { static_cast<uint32_t>(WIDTH), static_cast<uint32_t>(HEIGHT) };
+            int width, height;
+
+            glfwGetFramebufferSize(window, &width, &height);
+
+            VkExtent2D actualExtent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) };
             actualExtent.width = std::max(capabilities.minImageExtent.width, 
                 std::min(capabilities.maxImageExtent.width, actualExtent.width));
             actualExtent.height = std::max(capabilities.minImageExtent.height,
@@ -833,12 +837,20 @@ public:
     void drawFrame()
     {
         vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, std::numeric_limits<uint64_t>::max());
-        vkResetFences(device, 1, &inFlightFence);
+        
 
         /** S1: Get an image from swapchain */
         uint32_t imageIndex;
-        vkAcquireNextImageKHR(device, swapChain, std::numeric_limits<uint64_t>::max(),
+        VkResult result = vkAcquireNextImageKHR(device, swapChain, std::numeric_limits<uint64_t>::max(),
             imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+
+        if (result == VK_ERROR_OUT_OF_DATE_KHR || framebufferResized)
+        {
+            recreateSwapChain();
+            framebufferResized = false;
+        }
+
+        vkResetFences(device, 1, &inFlightFence);
 
         /** S2: execute render commands */
         VkSubmitInfo submitInfo = {};
@@ -899,6 +911,55 @@ public:
 			}
 
     }
+
+    void recreateSwapChain()
+    {
+        int width = 0, height = 0;
+        while (width == 0 || height == 0)
+        {
+            glfwGetFramebufferSize(window, &width, &height);
+            glfwWaitEvents();
+        }
+
+        vkDeviceWaitIdle(device);
+
+        cleanupSwapChain();
+
+        createSwapChain();
+        createImageViews();
+        createRenderPass();
+        createGraphicsPipeline();
+        createFramebuffers();
+        createCommandBuffers();
+    }
+
+    void cleanupSwapChain()
+    {
+		for (auto framebuffer : swapChainFramebuffers)
+		{
+			vkDestroyFramebuffer(device, framebuffer, nullptr);
+		}
+
+        vkFreeCommandBuffers(device, commandpool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
+    
+		vkDestroyPipeline(device, graphicsPipeline, nullptr);
+
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+
+		vkDestroyRenderPass(device, renderPass, nullptr);
+
+		for (auto imageView : swapChainImageViews)
+		{
+			vkDestroyImageView(device, imageView, nullptr);
+		}
+		vkDestroySwapchainKHR(device, swapChain, nullptr);
+    }
+
+    static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
+    {
+        auto app = reinterpret_cast<DeviceManager_Vulkan*>(glfwGetWindowUserPointer(window));
+        app->framebufferResized = true;
+    }
 private:
     VkInstance instance;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
@@ -924,6 +985,8 @@ private:
     VkFence inFlightFence;
 
     size_t currentFrame = 0;
+
+    bool framebufferResized = false;
 };
 
 void DeviceManager_Vulkan::InitWindow()
@@ -934,9 +997,15 @@ void DeviceManager_Vulkan::InitWindow()
     // GLFW原来为为了OpenGL设计的，所以需要显示的设置组织启动OpenGL上下文
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     // 禁止窗口大小的改变
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    //glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     // 创建窗口，获得窗口句柄
     window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan Triangle", nullptr, nullptr);
+
+    glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+
+    glfwSetWindowUserPointer(window, this);
+
+    
 }
 
 void DeviceManager_Vulkan::InitVulkan()
@@ -979,28 +1048,13 @@ void DeviceManager_Vulkan::MainLoop()
 
 void DeviceManager_Vulkan::Cleanup()
 {
+    cleanupSwapChain();
+
 	vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
 	vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
 	vkDestroyFence(device, inFlightFence, nullptr);
 
     vkDestroyCommandPool(device, commandpool, nullptr);
-
-    for (auto framebuffer : swapChainFramebuffers)
-    {
-        vkDestroyFramebuffer(device, framebuffer, nullptr);
-    }
-
-    vkDestroyPipeline(device, graphicsPipeline, nullptr);
-
-    vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-
-    vkDestroyRenderPass(device, renderPass, nullptr);
-
-    for (auto imageView : swapChainImageViews)
-    {
-        vkDestroyImageView(device, imageView, nullptr);
-    }
-    vkDestroySwapchainKHR(device, swapChain, nullptr);
 
     vkDestroyDevice(device, nullptr);
 
