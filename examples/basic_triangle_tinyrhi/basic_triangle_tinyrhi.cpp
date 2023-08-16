@@ -32,6 +32,7 @@
 #include <set>
 #include <fstream>
 #include <donut/core/math/math.h>
+#include "donut/app/Camera.h"
 
 //#ifdef NDEBUG
 const bool enableValidationLayers = false;
@@ -146,18 +147,18 @@ const std::vector<uint16_t> indices = {
 class DeviceManager_Vulkan
 {
 public:
-	GLFWwindow* window = nullptr;
-	const int32_t WIDTH = 1280;
-	const int32_t HEIGHT = 720;
+    GLFWwindow* window = nullptr;
+    const int32_t WIDTH = 1280;
+    const int32_t HEIGHT = 720;
     VkDebugUtilsMessengerEXT debugMessenger;
 
-	struct
-	{
-		int32_t graphics = -1;
+    struct
+    {
+        int32_t graphics = -1;
         int32_t compute = -1;
         int32_t transfer = -1;
         int32_t present = -1;
-	} queueFamilyIndices;
+    } queueFamilyIndices;
 
 public:
     void InitWindow();
@@ -186,15 +187,15 @@ public:
     void getDebugMessngerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo)
     {
         createInfo = {};
-		// debug messenger create info
-		createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-		createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT
-			| VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-			| VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-		createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
-			| VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
-			| VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-		createInfo.pfnUserCallback = debugCallback;
+        // debug messenger create info
+        createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+        createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT
+            | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
+            | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+        createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
+            | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
+            | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+        createInfo.pfnUserCallback = debugCallback;
     }
 
     // debug callback function
@@ -245,25 +246,25 @@ public:
 
         // graphics queue
         {
-			VkDeviceQueueCreateInfo queueCreateInfo = {};
-			queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-			queueCreateInfo.queueFamilyIndex = queueFamilyIndices.graphics;
-			queueCreateInfo.queueCount = 1;
-			float queuePriority = 1.f;
-			queueCreateInfo.pQueuePriorities = &queuePriority;  // We need to explicit set queue priority, no matter how many queues we create.
-			queueCreateInfos.push_back(queueCreateInfo);
+            VkDeviceQueueCreateInfo queueCreateInfo = {};
+            queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queueCreateInfo.queueFamilyIndex = queueFamilyIndices.graphics;
+            queueCreateInfo.queueCount = 1;
+            float queuePriority = 1.f;
+            queueCreateInfo.pQueuePriorities = &queuePriority;  // We need to explicit set queue priority, no matter how many queues we create.
+            queueCreateInfos.push_back(queueCreateInfo);
         }
 
         // present queue
         if (queueFamilyIndices.graphics != queueFamilyIndices.present)
         {
-			VkDeviceQueueCreateInfo queueCreateInfo = {};
-			queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-			queueCreateInfo.queueFamilyIndex = queueFamilyIndices.present;
-			queueCreateInfo.queueCount = 1;
-			float queuePriority = 1.f;
-			queueCreateInfo.pQueuePriorities = &queuePriority;  // We need to explicit set queue priority, no matter how many queues we create.
-			queueCreateInfos.push_back(queueCreateInfo);
+            VkDeviceQueueCreateInfo queueCreateInfo = {};
+            queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queueCreateInfo.queueFamilyIndex = queueFamilyIndices.present;
+            queueCreateInfo.queueCount = 1;
+            float queuePriority = 1.f;
+            queueCreateInfo.pQueuePriorities = &queuePriority;  // We need to explicit set queue priority, no matter how many queues we create.
+            queueCreateInfos.push_back(queueCreateInfo);
         }
 
 
@@ -281,7 +282,7 @@ public:
         // Set device features
         createInfo.pEnabledFeatures = &deviceFeatures;
 
-        
+
         createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
         createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
@@ -307,16 +308,16 @@ public:
     bool isDeviceSuitable(VkPhysicalDevice device)
     {
 
-		uint32_t queueFamilyCount = 0;
-		vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+        uint32_t queueFamilyCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
 
-		std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-		vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+        std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
 
         int32_t i = -1;
-		for (const auto& queueFamily : queueFamilies) {
+        for (const auto& queueFamily : queueFamilies) {
             ++i;
-			if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
                 queueFamilyIndices.graphics = i;
             }
 
@@ -456,7 +457,7 @@ public:
             glfwGetFramebufferSize(window, &width, &height);
 
             VkExtent2D actualExtent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) };
-            actualExtent.width = std::max(capabilities.minImageExtent.width, 
+            actualExtent.width = std::max(capabilities.minImageExtent.width,
                 std::min(capabilities.maxImageExtent.width, actualExtent.width));
             actualExtent.height = std::max(capabilities.minImageExtent.height,
                 std::min(capabilities.maxImageExtent.height, actualExtent.height));
@@ -515,7 +516,7 @@ public:
         createInfo.clipped = VK_TRUE;
 
         createInfo.oldSwapchain = VK_NULL_HANDLE;   // If we need to resize window, we need to create a new swapchain.
-                                                    // Also, the old swap chain must be set.
+        // Also, the old swap chain must be set.
 
         if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUCCESS)
         {
@@ -543,10 +544,10 @@ public:
             createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;        // image data type
             createInfo.format = swapChainImageFormat;
 
-			createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-			createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-			createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-			createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
 
             createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             createInfo.subresourceRange.baseMipLevel = 0;
@@ -684,8 +685,8 @@ public:
         // pipeline layout
         VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 1;
-        pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+        pipelineLayoutInfo.setLayoutCount = 0;// 1;
+        pipelineLayoutInfo.pSetLayouts = nullptr;// &descriptorSetLayout;
         pipelineLayoutInfo.pushConstantRangeCount = 0;
         pipelineLayoutInfo.pPushConstantRanges = nullptr;
 
@@ -854,16 +855,16 @@ public:
             beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
             beginInfo.pInheritanceInfo = nullptr;
-            
+
             if (vkBeginCommandBuffer(commandBuffers[i], &beginInfo) != VK_SUCCESS)
             {
                 throw std::runtime_error("failed to begin recording command buffer!");
             }
 
-			// begin render pass
-			VkRenderPassBeginInfo renderPassInfo = {};
-			renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-			renderPassInfo.renderPass = renderPass;
+            // begin render pass
+            VkRenderPassBeginInfo renderPassInfo = {};
+            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            renderPassInfo.renderPass = renderPass;
             renderPassInfo.framebuffer = swapChainFramebuffers[i];
             renderPassInfo.renderArea.offset = { 0, 0 };
             renderPassInfo.renderArea.extent = swapChainExtent;
@@ -883,8 +884,8 @@ public:
 
             vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
-            vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
+            //vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+            //    pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
             vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t> (indices.size()), 1, 0, 0, 0);
 
             vkCmdEndRenderPass(commandBuffers[i]);
@@ -901,8 +902,9 @@ public:
     void drawFrame()
     {
         vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, std::numeric_limits<uint64_t>::max());
-        
-        updateUniformBuffer(currentFrame);
+        vkResetFences(device, 1, &inFlightFence);
+
+        //updateUniformBuffer(currentFrame);
 
         /** S1: Get an image from swapchain */
         uint32_t imageIndex;
@@ -915,13 +917,11 @@ public:
             framebufferResized = false;
         }
 
-        vkResetFences(device, 1, &inFlightFence);
-
         /** S2: execute render commands */
         VkSubmitInfo submitInfo = {};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
-        VkSemaphore waitSemaphores[] = { imageAvailableSemaphore};
+        VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };
         VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
         submitInfo.waitSemaphoreCount = 1;
         submitInfo.pWaitSemaphores = waitSemaphores;
@@ -929,7 +929,7 @@ public:
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
 
-        VkSemaphore signalSemaphores[] = { renderFinishedSemaphore};
+        VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = signalSemaphores;
 
@@ -957,6 +957,7 @@ public:
 
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
+
     void createSyncObjects()
     {
         VkSemaphoreCreateInfo semaphoreInfo = {};
@@ -1215,24 +1216,18 @@ public:
         float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
         UniformBufferObject ubo{};
-        donut::math::float3 rotateAxis;
         
-        ubo.model = donut::math::affineToHomogeneous(donut::math::rotation(rotateAxis, time * donut::math::radians(90.f)));
-
+        ubo.model = donut::math::float4x4::identity();
+        
         // view
-        donut::math::float3 cameraPos(2.f, 2.f, 2.f);
-        donut::math::float3 targetPos(0.f, 0.f, 0.f);
-        donut::math::float3 upVector(0.f, 0.f, 1.f);
-        donut::math::float3 dir = donut::math::normalize(targetPos - cameraPos);
-        donut::math::float3 right = donut::math::normalize(donut::math::cross(dir, upVector));
-        donut::math::float3 up = donut::math::normalize(donut::math::cross(right, dir));
-        donut::math::affine3 translatedWorldToView = donut::math::affine3::from_cols(right, up, dir, 0.f);
-        donut::math::affine3 worldToView = donut::math::translation(-cameraPos) * translatedWorldToView;
-        ubo.view = donut::math::affineToHomogeneous(worldToView);
+		donut::math::float3 rotateAxes(0.f, 0.f, 1.f);
+		donut::math::affine3 viewMatrix = donut::math::translation(donut::math::float3(2, 2, 2));
+        ubo.view = donut::math::affineToHomogeneous(viewMatrix);
+        ubo.view = donut::math::float4x4::identity();
 
         // proj
-        ubo.proj = donut::math::perspProjOGLStyle(donut::math::radians(45.f), swapChainExtent.width / (float)swapChainExtent.height,
-            0.1f, 10.f);
+		ubo.proj = donut::math::perspProjD3DStyle(donut::math::radians(60.f), float(swapChainExtent.width) / float(swapChainExtent.height), 0.1f, 10.f);
+        ubo.proj = donut::math::float4x4::identity();
 
         memcpy(uniformBuffersMapped[currentFrame], &ubo, sizeof(ubo));
     }
@@ -1369,7 +1364,7 @@ void DeviceManager_Vulkan::InitVulkan()
 
     createRenderPass();
 
-    createDescriptorSetLayout();
+    //createDescriptorSetLayout();
 
     createGraphicsPipeline();
 
@@ -1381,8 +1376,8 @@ void DeviceManager_Vulkan::InitVulkan()
 
     createIndexBuffer();
     createUniformBuffers();
-    createDescriptorPool();
-    createDescriptorSets();
+    //createDescriptorPool();
+    //createDescriptorSets();
 
     createCommandBuffers();
 
