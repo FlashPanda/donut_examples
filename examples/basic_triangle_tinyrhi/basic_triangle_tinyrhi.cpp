@@ -1215,7 +1215,25 @@ public:
 
         UniformBufferObject ubo{};
         donut::math::float3 rotateAxis;
-        ubo.model = donut::math::rotation(rotateAxis, time * donut::math::radians(90.f)).m_linear;
+        
+        ubo.model = donut::math::affineToHomogeneous(donut::math::rotation(rotateAxis, time * donut::math::radians(90.f)));
+
+        // view
+        donut::math::float3 cameraPos(2.f, 2.f, 2.f);
+        donut::math::float3 targetPos(0.f, 0.f, 0.f);
+        donut::math::float3 upVector(0.f, 0.f, 1.f);
+        donut::math::float3 dir = donut::math::normalize(targetPos - cameraPos);
+        donut::math::float3 right = donut::math::normalize(donut::math::cross(dir, upVector));
+        donut::math::float3 up = donut::math::normalize(donut::math::cross(right, dir));
+        donut::math::affine3 translatedWorldToView = donut::math::affine3::from_cols(right, up, dir, 0.f);
+        donut::math::affine3 worldToView = donut::math::translation(-cameraPos) * translatedWorldToView;
+        ubo.view = donut::math::affineToHomogeneous(worldToView);
+
+        // proj
+        ubo.proj = donut::math::perspProjOGLStyle(donut::math::radians(45.f), swapChainExtent.width / (float)swapChainExtent.height,
+            0.1f, 10.f);
+
+        memcpy(uniformBuffersMapped[currentFrame], &ubo, sizeof(ubo));
     }
 private:
     VkInstance instance;
