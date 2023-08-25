@@ -117,6 +117,12 @@ public:
 			}
 		}
 
+		err = createLogicalDevice(enabledFeatures, enabledDeviceExtensions, deviceCreatepNextChain);
+		if (err) {
+			std::cerr << "Could not create Vulkan device: " << std::endl;
+			return false;
+		}
+
 
         return true;
     }
@@ -425,7 +431,12 @@ public:
 	uint32_t apiVersion = VK_API_VERSION_1_0;
 
     std::vector<std::string> supportedInstanceExtensions;
+	/** @brief Set of device extensions to be enabled for this example (must be set in the derived constructor) */
+	std::vector<const char*> enabledDeviceExtensions;
 	std::vector<const char*> enabledInstanceExtensions;
+
+	/** @brief Optional pNext structure for passing extension structures to device creation */
+	void* deviceCreatepNextChain = nullptr;
 
 	// Vulkan instance, stores all per-application states
 	VkInstance instance;
