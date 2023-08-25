@@ -48,6 +48,9 @@
 }
 #endif
 
+#define WINDOW_WIDTH 1280
+#define WINDOW_HEIGHT 720
+
 class DeviceManager_Vulkan
 {
 public:
@@ -127,9 +130,18 @@ public:
         return true;
     }
 
-    HWND setupWindow(HINSTANCE hinstance, WNDPROC wndproc)
+    void setupWindow(HINSTANCE hinstance, WNDPROC wndproc)
     {
+		glfwInit();
 
+		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+
+		window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Vulkan", nullptr, nullptr);
+
+		//if (glfwCreateWindowSurface(hinstance, window, nullptr, &surface) != VK_SUCCESS) {
+		//	throw std::runtime_error("failed to create window surface!");
+		//}
     }
 
     virtual void prepare()
@@ -414,7 +426,13 @@ public:
 		VK_CHECK_RESULT(vkCreateCommandPool(logicalDevice, &cmdPoolInfo, nullptr, &cmdPool));
 		return cmdPool;
 	}
+
+	void handleMessages(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+	{
+
+	}
 public:
+	GLFWwindow* window;
 	/** @brief Example settings that can be changed e.g. by command line arguments */
 	struct Settings {
 		/** @brief Activates validation layers (and message output) when set to true */
@@ -470,20 +488,20 @@ public:
 };
 
 #ifdef WIN32
+DeviceManager_Vulkan deviceVulkan;
+LRESULT CALLBACK WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+	deviceVulkan.handleMessages(hWnd, uMsg, wParam, lParam);
+
+	return (DefWindowProc(hWnd, uMsg, wParam, lParam));
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 #else
 int main(int __argc, const char** __argv)
 #endif
 {
-    // 一、实例
-    // 实例可以看成是Vulkan API本身
-    // 涉及概念：Instance，实例扩展、层
-
-    // 二、逻辑设备
-    // 逻辑设备可以看成是我们操作的物理设备的一个程序抽象，我们的操作只能对逻辑设备进行操作
-    // 创建逻辑设备需要用到物理设备，所以需要查询物理设备的属性，而查询则需要上一步中的实例。
-    // 涉及概念：物理设备（设备属性、功能、内存属性、队列族、设备扩展）
-
-    // 命令池，命令队列
+	deviceVulkan.initVulkan();
+	deviceVulkan.setupWindow(hInstance, WndProc);
     return 0;
 }
