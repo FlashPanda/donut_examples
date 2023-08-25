@@ -41,10 +41,9 @@
 #define VK_CHECK_RESULT(f)																				\
 {																										\
 	VkResult res = (f);																					\
-	if (res != VK_SUCCESS)																				\
+	if (res)																				\
 	{																									\
-		std::cout << "Fatal : VkResult is \"" << vks::tools::errorString(res) << "\" in " << __FILE__ << " at line " << __LINE__ << "\n"; \
-		assert(res == VK_SUCCESS);																		\
+		std::cerr << "Fatal : VkResult is not success in " << __FILE__ << " at line " << __LINE__ << "\n"; \
 	}																									\
 }
 #endif
@@ -277,7 +276,7 @@ public:
 				queueInfo.queueFamilyIndex = queueFamilyIndices.compute;
 				queueInfo.queueCount = 1;
 				queueInfo.pQueuePriorities = &defaultQueuePriority;
-				queueInfo.push_back(queueInfo);
+				queueCreateInfos.push_back(queueInfo);
 			}
 		}
 		else
@@ -388,6 +387,27 @@ public:
 
 		throw std::runtime_error("Could not find a matching queue family index");
 	}
+
+	/**
+	* Create a command pool for allocation command buffers from
+	*
+	* @param queueFamilyIndex Family index of the queue to create the command pool for
+	* @param createFlags (Optional) Command pool creation flags (Defaults to VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT)
+	*
+	* @note Command buffers allocated from the created pool can only be submitted to a queue with the same family index
+	*
+	* @return A handle to the created command buffer
+	*/
+	VkCommandPool   createCommandPool(uint32_t queueFamilyIndex, VkCommandPoolCreateFlags createFlags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT)
+	{
+		VkCommandPoolCreateInfo cmdPoolInfo = {};
+		cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+		cmdPoolInfo.queueFamilyIndex = queueFamilyIndex;
+		cmdPoolInfo.flags = createFlags;
+		VkCommandPool cmdPool;
+		VK_CHECK_RESULT(vkCreateCommandPool(logicalDevice, &cmdPoolInfo, nullptr, &cmdPool));
+		return cmdPool;
+	}
 public:
 	/** @brief Example settings that can be changed e.g. by command line arguments */
 	struct Settings {
@@ -434,6 +454,8 @@ public:
 		uint32_t compute;
 		uint32_t transfer;
 	} queueFamilyIndices;
+	/** @brief Default command pool for the graphics queue family index */
+	VkCommandPool commandPool = VK_NULL_HANDLE;
 };
 
 #ifdef WIN32
