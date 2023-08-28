@@ -48,14 +48,320 @@
 }
 #endif
 
-#define WINDOW_WIDTH 1280
-#define WINDOW_HEIGHT 720
+typedef struct _SwapChainBuffers {
+	VkImage image;
+	VkImageView view;
+} SwapChainBuffer;
+
+class VulkanSwapChain
+{
+private:
+	VkInstance instance;
+	VkDevice device;
+	VkPhysicalDevice physicalDevice;
+	VkSurfaceKHR surface;
+
+public:
+	uint32_t queueNodeIndex = UINT32_MAX;
+	VkFormat colorFormat;
+	VkColorSpaceKHR colorSpace;
+	VkSwapchainKHR swapChain = VK_NULL_HANDLE;
+	uint32_t imageCount;
+	std::vector<VkImage> images;
+	std::vector<SwapChainBuffer> buffers;
+
+public:
+	void connect(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device)
+	{
+		this->instance = instance;
+		this->physicalDevice = physicalDevice;
+		this->device = device;
+	}
+
+	void initSurface(VkSurfaceKHR windowSurface) 
+	{
+		surface = windowSurface;
+		// Get available queue family properties
+		uint32_t queueCount;
+		vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueCount, NULL);
+		assert(queueCount >= 1);
+
+		std::vector<VkQueueFamilyProperties> queueProps(queueCount);
+		vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueCount, queueProps.data());
+
+		// Iterate over each queue to learn whether it supports presenting:
+		// Find a queue with present support
+		// Will be used to present the swap chain images to the windowing system
+		std::vector<VkBool32> supportsPresent(queueCount);
+		for (uint32_t i = 0; i < queueCount; ++i)
+		{
+			vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, windowSurface, &supportsPresent[i]);
+		}
+
+		// Search for a graphics and a present queue in the array of queue
+		// families, try to find one that supports both
+		uint32_t graphicsQueueNodeIndex = UINT32_MAX;
+		uint32_t presentQueueNodeIndex = UINT32_MAX;
+		for (uint32_t i = 0; i < queueCount; ++i)
+		{
+			if ((queueProps[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0)
+			{
+				if (graphicsQueueNodeIndex == UINT32_MAX)
+				{
+					graphicsQueueNodeIndex = i;
+				}
+
+				if (supportsPresent[i] == VK_TRUE)
+				{
+					graphicsQueueNodeIndex = i;
+					presentQueueNodeIndex = i;
+					break;
+				}
+			}
+		}
+
+		if (presentQueueNodeIndex == UINT32_MAX)
+		{
+			// If there's no queue that supports both present and graphics
+			// try to find a separate present queue
+			for (uint32_t i = 0; i < queueCount; ++i)
+			{
+				for (uint32_t i = 0; i < queueCount; ++i)
+				{
+					presentQueueNodeIndex = i;
+					break;
+				}
+			}
+		}
+
+		// Exit if either a graphics or a presenting queue hasn't been found
+		if (graphicsQueueNodeIndex == UINT32_MAX || presentQueueNodeIndex == UINT32_MAX)
+		{
+			throw std::runtime_error("Count not find a graphics and / or presenting queue!");
+		}
+
+		// todo : Add support for separate graphics and presenting queue
+		if (graphicsQueueNodeIndex != presentQueueNodeIndex)
+		{
+			throw std::runtime_error("Separate graphics and presenting queues are not supported yet!");
+		}
+
+		queueNodeIndex = graphicsQueueNodeIndex;
+
+		// Get list of supported surface formats
+		uint32_t formatCount;
+		VK_CHECK_RESULT(vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, NULL));
+		assert(formatCount > 0);
+		
+		std::vector<VkSurfaceFormatKHR> surfaceFormats(formatCount);
+		VK_CHECK_RESULT(vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, surfaceFormats.data()));
+
+		// We want to get a format that best suits our needs, so we try to get one from a set of preferred formats
+		// Initialize the format to the first one returned by the implementation in case we can't find one of the preffered formats
+		VkSurfaceFormatKHR selectedFormat = surfaceFormats[0];
+		std::vector<VkFormat> preferredImageFormats = {
+			VK_FORMAT_B8G8R8A8_UNORM,
+			VK_FORMAT_R8G8B8A8_UNORM,
+			VK_FORMAT_A8B8G8R8_UNORM_PACK32
+		};
+
+		for (auto& availableFormat : surfaceFormats)
+		{
+			if (std::find(preferredImageFormats.begin(), preferredImageFormats.end(), availableFormat.format) != preferredImageFormats.end()) {
+				selectedFormat = availableFormat;
+				break;
+			}
+		}
+
+		colorFormat = selectedFormat.format;
+		colorSpace = selectedFormat.colorSpace;
+	}
+
+	/**
+	* Create the swapchain and get its images with given width and height
+	*
+	* @param width Pointer to the width of the swapchain (may be adjusted to fit the requirements of the swapchain)
+	* @param height Pointer to the height of the swapchain (may be adjusted to fit the requirements of the swapchain)
+	* @param vsync (Optional) Can be used to force vsync-ed rendering (by using VK_PRESENT_MODE_FIFO_KHR as presentation mode)
+	*/
+	void create(uint32_t* width, uint32_t* height, bool vsync = false, bool fullscreen = false)
+	{
+		// Store the current swap chain handle so we can use it later on to ease up recreation
+		VkSwapchainKHR oldSwapchain = swapChain;
+
+		// Get physical device surface properties and formats
+		VkSurfaceCapabilitiesKHR surfCaps;
+		VK_CHECK_RESULT(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfCaps));
+
+		// Get available present modes
+		uint32_t presentModeCount;
+		VK_CHECK_RESULT(vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, nullptr));
+
+		std::vector<VkPresentModeKHR> presentModes(presentModeCount);
+		VK_CHECK_RESULT(vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount,
+			presentModes.data()));
+
+		VkExtent2D swapchainExtent = {};
+		// If width (and height) equals the special value 0xFFFFFFFF, the sizeof the surface will be set by the swapchain
+		if (surfCaps.currentExtent.width == (uint32_t)-1)
+		{
+			// If the surface size is undefind, the size is set to the size of the images requested
+			swapchainExtent.width = *width;
+			swapchainExtent.height = *height;
+		}
+		else
+		{
+			// If the surface size is defined, the swap chain size must match
+			swapchainExtent = surfCaps.currentExtent;
+			*width = surfCaps.currentExtent.width;
+			*height = surfCaps.currentExtent.height;
+		}
+
+		// Select a present mode for the swapchain
+
+		// The VK_PRESENT_MODE_FIFO_KHR mode must always be present as per spec
+		// This mode watits for the vertical blank("v-sync")
+		VkPresentModeKHR swapchainPresentMode = VK_PRESENT_MODE_FIFO_KHR;
+
+		// If v-sync is not requested, try to fnd a mailbox mode
+		// It's the lowest latency non-tearing present mode available
+		if (!vsync)
+		{
+			for (size_t i = 0; i < presentModeCount; ++i)
+			{
+				if (presentModes[i] == VK_PRESENT_MODE_MAILBOX_KHR)
+				{
+					swapchainPresentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+					break;
+				}
+				if (presentModes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR)
+				{
+					swapchainPresentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+				}
+			}
+		}
+		
+		// Determine the number of images
+		uint32_t desiredNumberOfSwapchainImages = surfCaps.minImageCount + 1;
+		if ((surfCaps.maxImageCount > 0) && (desiredNumberOfSwapchainImages > surfCaps.maxImageCount))
+		{
+			desiredNumberOfSwapchainImages = surfCaps.maxImageCount;
+		}
+
+		// Find the transformation of the surface
+		VkSurfaceTransformFlagsKHR preTransform;
+		if (surfCaps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
+		{
+			// We prefer a non-rotated transform
+			preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+		}
+		else
+		{
+			preTransform = surfCaps.currentTransform;
+		}
+
+		// Find a supported composite alpha format (not all devices support alpha opaque)
+		VkCompositeAlphaFlagBitsKHR compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+		// Simply select the first composite alpha format available
+		std::vector<VkCompositeAlphaFlagBitsKHR> compositeAlphaFlags = {
+			VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+			VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+			VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+			VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+		};
+		for (auto& compositeAlphaFlag : compositeAlphaFlags)
+		{
+			if (surfCaps.supportedCompositeAlpha & compositeAlphaFlag)
+			{
+				compositeAlpha = compositeAlphaFlag;
+				break;
+			}
+		}
+
+		// swap chain create info
+		VkSwapchainCreateInfoKHR swapchainCI{};
+		swapchainCI.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+		swapchainCI.surface = surface;
+		swapchainCI.minImageCount = desiredNumberOfSwapchainImages;
+		swapchainCI.imageFormat = colorFormat;
+		swapchainCI.imageColorSpace = colorSpace;
+		swapchainCI.imageExtent = { swapchainExtent.width, swapchainExtent.height };
+		swapchainCI.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+		swapchainCI.preTransform = (VkSurfaceTransformFlagBitsKHR)preTransform;
+		swapchainCI.imageArrayLayers = 1;
+		swapchainCI.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		swapchainCI.queueFamilyIndexCount = 0;
+		swapchainCI.presentMode = swapchainPresentMode;
+		// setting oldswapchain to the saved handle of the previous swapchain aids in resource reuse and makes sure that we can still present already acquired images
+		swapchainCI.oldSwapchain = oldSwapchain;
+		// Setting cliped to VK_TRUE allows the implemntation to discard rendering outside of the surface area
+		swapchainCI.clipped = VK_TRUE;
+		swapchainCI.compositeAlpha = compositeAlpha;
+
+		// Enable transfer source on swap chain images if supported
+		if (surfCaps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+		{
+			swapchainCI.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+		}
+
+		// Enable transfer destination on swap chain images if supported
+		if (surfCaps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+		{
+			swapchainCI.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+		}
+
+		VK_CHECK_RESULT(vkCreateSwapchainKHR(device, &swapchainCI, nullptr, &swapChain));
+
+		// If an existing swap chain is re-created, destroy the old swap chain
+		// This is also cleans up all the presentable images
+		if (oldSwapchain != VK_NULL_HANDLE)
+		{
+			for (uint32_t i = 0; i < imageCount; ++i)
+			{
+				vkDestroyImageView(device, buffers[i].view, nullptr);
+			}
+			vkDestroySwapchainKHR(device, oldSwapchain, nullptr);
+		}
+		VK_CHECK_RESULT(vkGetSwapchainImagesKHR(device, swapChain, &imageCount, NULL));
+
+		// Get the swap chain images
+		images.resize(imageCount);
+		VK_CHECK_RESULT(vkGetSwapchainImagesKHR(device, swapChain, &imageCount, images.data()));
+
+		// Get the swap chain buffers containing the image and imageview
+		for (uint32_t i = 0; i < imageCount; ++i)
+		{
+			VkImageViewCreateInfo colorAttachmentView{};
+			colorAttachmentView.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+			colorAttachmentView.pNext = NULL;
+			colorAttachmentView.format = colorFormat;
+			colorAttachmentView.components = {
+				VK_COMPONENT_SWIZZLE_R,
+				VK_COMPONENT_SWIZZLE_G,
+				VK_COMPONENT_SWIZZLE_B,
+				VK_COMPONENT_SWIZZLE_A,
+			};
+			colorAttachmentView.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			colorAttachmentView.subresourceRange.baseMipLevel = 0;
+			colorAttachmentView.subresourceRange.levelCount = 1;
+			colorAttachmentView.subresourceRange.baseArrayLayer = 0;
+			colorAttachmentView.subresourceRange.layerCount = 1;
+			colorAttachmentView.viewType = VK_IMAGE_VIEW_TYPE_2D;
+
+			buffers[i].image = images[i];
+
+			colorAttachmentView.image = buffers[i].image;
+
+			VK_CHECK_RESULT(vkCreateImageView(device, &colorAttachmentView, nullptr, &buffers[i].view));
+		}
+	}
+};
 
 class DeviceManager_Vulkan
 {
 public:
-    bool initVulkan()
-    {
+	bool initVulkan()
+	{
 		VkResult err;
 
 		// Vulkan instance
@@ -94,7 +400,7 @@ public:
 		vkGetPhysicalDeviceProperties(physicalDevice, &deviceProperties);
 		vkGetPhysicalDeviceFeatures(physicalDevice, &deviceFeatures);
 		vkGetPhysicalDeviceMemoryProperties(physicalDevice, &deviceMemoryProperties);
-		
+
 		// Vulkan device creation
 		// This is handled by a separate class that gets a logical device representation
 		// and encapsulates functions related to a device
@@ -127,11 +433,11 @@ public:
 		}
 
 
-        return true;
-    }
+		return true;
+	}
 
-    void setupWindow(HINSTANCE hinstance, WNDPROC wndproc)
-    {
+	void setupWindow(HINSTANCE hinstance, WNDPROC wndproc)
+	{
 		glfwInit();
 
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -139,44 +445,97 @@ public:
 
 		window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Vulkan", nullptr, nullptr);
 
-		//if (glfwCreateWindowSurface(hinstance, window, nullptr, &surface) != VK_SUCCESS) {
-		//	throw std::runtime_error("failed to create window surface!");
-		//}
-    }
+		// create window surface with respect to window
+		if (glfwCreateWindowSurface(instance, window, nullptr, &windowSurface) != VK_SUCCESS) {
+			throw std::runtime_error("failed to create window surface!");
+		}
+	}
 
-    virtual void prepare()
-    {
+	virtual void prePrepare()
+	{
+		swapChain.initSurface(windowSurface);
 
-    }
+		createCommandPool();
 
-    void renderLoop()
-    {
+		swapChain.create(&width, &height, settings.vsync, settings.fullscreen);
 
-    }
+		createCommandBuffers();
+
+		createSynchronizationPrimitives();
+
+		//setupDepthStencil();
+	}
+
+	void createCommandBuffers()
+	{
+		// Create one command buffer for each swap chain image and reuse for rendering
+		drawCmdBuffers.resize(swapChain.imageCount);
+
+		VkCommandBufferAllocateInfo commandBufferAllocateInfo{};
+		commandBufferAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		commandBufferAllocateInfo.commandPool = cmdPool;
+		commandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		commandBufferAllocateInfo.commandBufferCount = drawCmdBuffers.size();
+		
+		VK_CHECK_RESULT(vkAllocateCommandBuffers(logicalDevice, &commandBufferAllocateInfo, drawCmdBuffers.data()));
+	}
+
+	void createSynchronizationPrimitives()
+	{
+		// wait fences to sync command buffer access
+		VkFenceCreateInfo fenceCreateInfo{};
+		fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		fenceCreateInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+		waitFences.resize(drawCmdBuffers.size());
+		for (auto& fence : waitFences)
+		{
+			VK_CHECK_RESULT(vkCreateFence(logicalDevice, &fenceCreateInfo, nullptr, &fence));
+		}
+	}
+
+	void createPipelines()
+	{
+		// Vulkan uses the concept of rendering pipelines to encapsulate fixed states, replacing OpenGL's complex state machine
+		// A pipeline is then stored and hashed on the GPU making pipeline changes very fast
+		VkGraphicsPipelineCreateInfo pipelineCI{};
+		pipelineCI.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		// The layout used for this pipeline (can be shared among multple pipelines using the same layout)
+		pipelineCI.layout = pipelineLay
+	}
+
+	void prepare()
+	{
+
+	}
+
+	void renderLoop()
+	{
+
+	}
 
 	//void getEnabledFeatures() {
 	//}
 
 	/** @brief (Virtual) Creates the application wide Vulkan instance */
-    virtual VkResult createInstance(bool enableValidation) 
-    {
-        settings.validation = enableValidation;
+	virtual VkResult createInstance(bool enableValidation)
+	{
+		settings.validation = enableValidation;
 
-        VkApplicationInfo appInfo{};
-        appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        appInfo.pApplicationName = name.c_str();
-        appInfo.pEngineName = name.c_str();
-        appInfo.apiVersion = apiVersion;
+		VkApplicationInfo appInfo{};
+		appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+		appInfo.pApplicationName = name.c_str();
+		appInfo.pEngineName = name.c_str();
+		appInfo.apiVersion = apiVersion;
 
-        std::vector<const char*> instanceExtensions = { VK_KHR_SURFACE_EXTENSION_NAME };
-    
+		std::vector<const char*> instanceExtensions = { VK_KHR_SURFACE_EXTENSION_NAME };
+
 #if defined (_WIN32)
-        instanceExtensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
+		instanceExtensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
 #endif
-        // check extension properties
-        // save supported extensions which will be used later
-        uint32_t extCount = 0;
-        vkEnumerateInstanceExtensionProperties(nullptr, &extCount, nullptr);
+		// check extension properties
+		// save supported extensions which will be used later
+		uint32_t extCount = 0;
+		vkEnumerateInstanceExtensionProperties(nullptr, &extCount, nullptr);
 
 		if (extCount > 0)
 		{
@@ -190,9 +549,9 @@ public:
 			}
 		}
 
-        // enable requested instance extensions
-        if (enabledInstanceExtensions.size() > 0)
-        {
+		// enable requested instance extensions
+		if (enabledInstanceExtensions.size() > 0)
+		{
 			for (const char* enabledExtension : enabledInstanceExtensions)
 			{
 				// Output message if requested extension is not available
@@ -202,7 +561,7 @@ public:
 				}
 				instanceExtensions.push_back(enabledExtension);
 			}
-        }
+		}
 
 		VkInstanceCreateInfo instanceCreateInfo = {};
 		instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -249,7 +608,7 @@ public:
 		VkResult result = vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
 
 		return result;
-    }
+	}
 
 	/**
 	 * Create the logical device based on the assigned physical device, also gets default queue family indices
@@ -416,23 +775,25 @@ public:
 	*
 	* @return A handle to the created command buffer
 	*/
-	VkCommandPool   createCommandPool(uint32_t queueFamilyIndex, VkCommandPoolCreateFlags createFlags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT)
+	void   createCommandPool()
 	{
 		VkCommandPoolCreateInfo cmdPoolInfo = {};
 		cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-		cmdPoolInfo.queueFamilyIndex = queueFamilyIndex;
-		cmdPoolInfo.flags = createFlags;
-		VkCommandPool cmdPool;
-		VK_CHECK_RESULT(vkCreateCommandPool(logicalDevice, &cmdPoolInfo, nullptr, &cmdPool));
-		return cmdPool;
+		cmdPoolInfo.queueFamilyIndex = swapChain.queueNodeIndex;
+		cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+		VK_CHECK_RESULT(vkCreateCommandPool(device, &cmdPoolInfo, nullptr, &cmdPool));
 	}
 
 	void handleMessages(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	{
 
 	}
+
+
 public:
+	std::vector<VkFence> waitFences;
 	GLFWwindow* window;
+	VkSurfaceKHR windowSurface;	// surface with respect to window
 	/** @brief Example settings that can be changed e.g. by command line arguments */
 	struct Settings {
 		/** @brief Activates validation layers (and message output) when set to true */
@@ -485,6 +846,27 @@ public:
 	} queueFamilyIndices;
 	/** @brief Default command pool for the graphics queue family index */
 	VkCommandPool commandPool = VK_NULL_HANDLE;
+
+	VulkanSwapChain swapChain;
+
+	uint32_t width = 1280;
+	uint32_t height = 720;
+
+	// Command buffer pool
+	VkCommandPool cmdPool;
+	// Command buffers used for rendering
+	std::vector<VkCommandBuffer> drawCmdBuffers;
+
+	// The pipeline layout is used by a pipeline to access the descriptor sets
+	// It defines interface (without binding any actual data) between the shader stages used by the pipeline and the shader resources
+	// A pipeline layout can be shared among multiple pipelines as long as their interfaces match
+	VkPipelineLayout pipelineLayout;
+
+	// Pipelines (often called "pipeline state objects") are used to bake all states that affect a pipeline
+	// While in OpenGL every state can be changed at (almost) any time, Vulkan requires to layout the graphics (and compute) pipeline states upfront
+	// So for each combination of non-dynamic pipeline states you need a new pipeline(there are a few expections to this not discussed here)
+	// Even though this adds a new dimension of planning ahead, it's a great opportunity for performance optimizations by the driver
+	VkPipeline pipeline;
 };
 
 #ifdef WIN32
@@ -503,5 +885,7 @@ int main(int __argc, const char** __argv)
 {
 	deviceVulkan.initVulkan();
 	deviceVulkan.setupWindow(hInstance, WndProc);
+	deviceVulkan.prePrepare();
+	deviceVulkan.prepare();
     return 0;
 }
