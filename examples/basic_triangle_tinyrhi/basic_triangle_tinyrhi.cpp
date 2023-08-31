@@ -48,6 +48,10 @@
 }
 #endif
 
+// We want to keep GPU and CPU busy. To do that we may start building a new command buffer while the previous one is still being executed
+// This number defines how many frames may be worked on simultaneously at once
+#define MAX_CONCURRENT_FRAMES 2
+
 typedef struct _SwapChainBuffers {
 	VkImage image;
 	VkImageView view;
@@ -360,6 +364,26 @@ public:
 class DeviceManager_Vulkan
 {
 public:
+	// Vertex layout used in this example
+	struct Vertex {
+		float position[3];
+		float color[3];
+	};
+
+
+	// Vertex buffer and attributes
+	struct {
+		VkDeviceMemory memory; // Handle to the device memory for this buffer
+		VkBuffer buffer;       // Handle to the Vulkan buffer object that the memory is bound to
+	} vertices;
+
+	// Index buffer
+	struct {
+		VkDeviceMemory memory;
+		VkBuffer buffer;
+		uint32_t count;
+	} indices;
+public:
 	bool initVulkan()
 	{
 		VkResult err;
@@ -451,45 +475,42 @@ public:
 		}
 	}
 
-	virtual void prePrepare()
-	{
-		swapChain.initSurface(windowSurface);
-
-		createCommandPool();
-
-		swapChain.create(&width, &height, settings.vsync, settings.fullscreen);
-
-		createCommandBuffers();
-
-		createSynchronizationPrimitives();
-
-		//setupDepthStencil();
-	}
-
 	void createCommandBuffers()
 	{
-		// Create one command buffer for each swap chain image and reuse for rendering
-		drawCmdBuffers.resize(swapChain.imageCount);
+		// All command buffers are allocated from a command pool
+		VkCommandPoolCreateInfo commandPoolCI{};
+		commandPoolCI.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+		commandPoolCI.queueFamilyIndex = swapChain.queueNodeIndex;
+		commandPoolCI.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+		VK_CHECK_RESULT(vkCreateCommandPool(logicalDevice, &commandPoolCI, nullptr, commandPool));
 
-		VkCommandBufferAllocateInfo commandBufferAllocateInfo{};
-		commandBufferAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-		commandBufferAllocateInfo.commandPool = cmdPool;
-		commandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-		commandBufferAllocateInfo.commandBufferCount = drawCmdBuffers.size();
-		
-		VK_CHECK_RESULT(vkAllocateCommandBuffers(logicalDevice, &commandBufferAllocateInfo, drawCmdBuffers.data()));
+		// Allocate one command buffer per max. concurrent frame from above pool
+		VkCommandBufferAllocateInfo cmdBufAllocateInfo{};
+		cmdBufAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		cmdBufAllocateInfo.commandPool = commandPool;
+		cmdBufAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		cmdBufAllocateInfo.commandBufferCount = MAX_CONCURRENT_FRAMES;
+		VK_CHECK_RESULT(vkAllocateCommandBuffers(logicalDevice, &cmdBufAllocateInfo, commandbu))
 	}
 
 	void createSynchronizationPrimitives()
 	{
-		// wait fences to sync command buffer access
-		VkFenceCreateInfo fenceCreateInfo{};
-		fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-		fenceCreateInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-		waitFences.resize(drawCmdBuffers.size());
-		for (auto& fence : waitFences)
+		for (uint32_t i = 0; i < MAX_CONCURRENT_FRAMES; ++i)
 		{
-			VK_CHECK_RESULT(vkCreateFence(logicalDevice, &fenceCreateInfo, nullptr, &fence));
+			// Semaphores (Used for correct command ordering)
+			VkSemaphoreCreateInfo semaphoreCI{};
+			semaphoreCI.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+			// Semaphore used to ensure that image presentation is complete before starting to submit again
+			VK_CHECK_RESULT(vkCreateSemaphore(logicalDevice, &semaphoreCI, nullptr, &presentCompleteSemaphores[i]));
+			// Semaphore used to ensure that all commands submitted have been finished before submitting the image to the queue
+			VK_CHECK_RESULT(vkCreateSemaphore(logicalDevice, &semaphoreCI, nullptr, &renderCompleteSemaphores[i]));
+
+			// Fences (Used to check draw command buffer completion)
+			VkFenceCreateInfo fenceCI{};
+			fenceCI.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+			// Create in signaled state so we don't wait on first render of each command buffer
+			fenceCI.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+			VK_CHECK_RESULT(vkCreateFence(logicalDevice, &fenceCI, nullptr, &waitFences[i]));
 		}
 	}
 
@@ -505,7 +526,306 @@ public:
 
 	void prepare()
 	{
+		swapChain.initSurface(windowSurface);
 
+		swapChain.create(&width, &height, settings.vsync, settings.fullscreen);
+
+		setupDepthStencil();
+
+		setupRenderPass();
+
+		setupFrameBuffer();
+
+		createSynchronizationPrimitives();
+
+		createCommandBuffers();
+
+		createVertexBuffer();
+	}
+
+	// Prepare vertex and index buffers for an indexed triangle
+	// Also uploads them to device local memory using staging and initialize vertex input and attribute binding to match the vertex shader
+	void createVertexBuffer()
+	{
+		// A note on memory management in Vulkan in general:
+		//	This is a very complex topic and while its' fine for an example application to small individual memory allocations that is not 
+		// what should be done a real-world application, where you should allocate large chunks of memory at once instead.
+
+		// Setup vertices
+		std::vector<Vertex> vertexBuffer{
+			{ {  1.0f,  1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } },
+			{ { -1.0f,  1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f } },
+			{ {  0.0f, -1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f } }
+		};
+		uint32_t vertexBufferSize = static_cast<uint32_t>(vertexBuffer.size()) * sizeof(Vertex);
+
+		// Setup indices
+		std::vector<uint32_t> indexBuffer{ 0, 1, 2 };
+		indices.count = static_cast<uint32_t> (indexBuffer.size());
+		uint32_t indexBufferSize = indices.count * sizeof(uint32_t);
+
+		VkMemoryAllocateInfo memAlloc{};
+		memAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		VkMemoryRequirements memReqs;
+
+		// Static data like vertex and index buffer should be stored on the device memory for optimal
+		// (and fastest) access by the GPU
+		//
+		// To achieve this we use so-called "staging buffers" :
+		// - Create a buffer that's visible to the host (and can be mapped)
+		// - Copy the data to this buffer
+		// - Create another buffer that's local on the device (VRAM) with the same size
+		// - Copy the data from the host to the device using a command buffer
+		// - Delete the host visible (staging) buffer
+		// - Use the device local buffers for rendering
+		//
+		// Note: On unified memory architectures where host (CPU) and GPU share the same memory, staging is not necessary
+		// To keep this sample easy to follow, there is no check for that in place
+
+		struct StagingBuffer
+		{
+			VkDeviceMemory memory;
+			VkBuffer buffer;
+		};
+
+		struct
+		{
+			StagingBuffer vertices;
+			StagingBuffer indices;
+		} stagingBuffers;
+
+		void* data;
+
+		// Vertex buffer
+		VkBufferCreateInfo vertexBufferInfoCI{};
+		vertexBufferInfoCI.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		vertexBufferInfoCI.size = vertexBufferSize;
+		// Buffer is used as the copy source
+		vertexBufferInfoCI.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+		VK_CHECK_RESULT(vkCreateBuffer(logicalDevice, &vertexBufferInfoCI, nullptr, &stagingBuffers.vertices.buffer));
+		vkGetBufferMemoryRequirements(logicalDevice, stagingBuffers.vertices.buffer, &memReqs);
+		memAlloc.allocationSize = memReqs.size;
+		// Request a host visible memory type that can be used to copy our data to
+		// Also request it to be coherent, so that writes are visible to the GPU right after unmapping the buffer
+		memAlloc.memoryTypeIndex = getMemoryTypeIndex(memReqs.memoryTypeBits,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		VK_CHECK_RESULT(vkAllocateMemory(logicalDevice, &memAlloc, nullptr, &stagingBuffers.vertices.memory));
+		// Map and copy
+		VK_CHECK_RESULT(vkMapMemory(device, stagingBuffers.vertices.memory, 0, memAlloc.allocationSize, 0, &data));
+		memcpy(data, vertexBuffer.data(), vertexBufferSize);
+		vkUnmapMemory(logicalDevice, stagingBuffers.vertices.memory);
+		VK_CHECK_RESULT(vkBindBufferMemory(logicalDevice, stagingBuffers.vertices.buffer,
+			stagingBuffers.vertices.memory, 0));
+
+		// Create a device local buffer to which the (host local) vertex data will be copied and which will be used for rendering
+		vertexBufferInfoCI.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+		VK_CHECK_RESULT(vkCreateBuffer(logicalDevice, &vertexBufferInfoCI, nullptr, &vertices.buffer));
+		vkGetBufferMemoryRequirements(logicalDevice, vertices.buffer, &memReqs);
+		memAlloc.allocationSize = memReqs.size;
+		memAlloc.memoryTypeIndex = getMemoryTypeIndex(memReqs.memoryTypeBits,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		VK_CHECK_RESULT(vkAllocateMemory(logicalDevice, &memAlloc, nullptr, &vertices.memory));
+		VK_CHECK_RESULT(vkBindBufferMemory(logicalDevice, vertices.buffer, vertices.memory, 0));
+
+		// Index buffer
+		VkBufferCreateInfo indexbufferCI{};
+		indexbufferCI.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		indexbufferCI.size = indexBufferSize;
+		indexbufferCI.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+		// Copy index data to a buffer visible to the host (staging buffer)
+		VK_CHECK_RESULT(vkCreateBuffer(logicalDevice, &indexbufferCI, nullptr, &stagingBuffers.indices.buffer));
+		vkGetBufferMemoryRequirements(logicalDevice, stagingBuffers.indices.buffer, &memReqs);
+		memAlloc.allocationSize = memReqs.size;
+		memAlloc.memoryTypeIndex = getMemoryTypeIndex(memReqs.memoryTypeBits,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		VK_CHECK_RESULT(vkAllocateMemory(logicalDevice, &memAlloc, nullptr, &stagingBuffers.indices.memory));
+		VK_CHECK_RESULT(vkMapMemory(logicalDevice, stagingBuffers.indices.memory, 0, indexBufferSize, 0, &data));
+		memcpy(data, indexBuffer.data(), indexBufferSize);
+		vkUnmapMemory(logicalDevice, stagingBuffers.indices.memory);
+		VK_CHECK_RESULT(vkBindBufferMemory(logicalDevice, &indexbufferCI, nullptr, &indices.buffer));
+		vkGetBufferMemoryRequirements(logicalDevice, indices.buffer, &memReqs);
+		memAlloc.allocationSize = memReqs.size;
+		memAlloc.memoryTypeIndex = getMemoryTypeIndex(memReqs.memoryTypeBits,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		VK_CHECK_RESULT(vkAllocateMemory(logicalDevice, &memAlloc, nullptr, &indices.memory));
+		VK_CHECK_RESULT(vkBindBufferMemory(logicalDevice, indices.buffer, indices.memory, 0));
+
+		// Buffer copies have to be submitted to a queue, so we need a command buffer for them
+		// Note: Some devices offer a dedicated transfer queue (with only the transfer bit set) that may be faster when doing lots of copies
+		VkCommandBuffer copyCmd;
+
+		VkCommandBufferAllocateInfo cmdBufAllocateInfo{};
+		cmdBufAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		cmdBufAllocateInfo.commandPool = commandPool;
+		cmdBufAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		cmdBufAllocateInfo.commandBufferCount = 1;
+		VK_CHECK_RESULT(vkAllocateCommandBuffers(logicalDevice, &cmdBufAllocateInfo, &copyCmd));
+
+		VkCommandBufferBeginInfo cmdBufInfo{};
+		cmdBufInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		VK_CHECK_RESULT(vkBeginCommandBuffer(copyCmd, &cmdBufInfo));
+		// Put buffer region copies into command buffer
+		VkBufferCopy copyRegion{};
+		// Vertex buffer
+		copyRegion.size = vertexBufferSize;
+		vkCmdCopyBuffer(copyCmd, stagingBuffers.vertices.buffer, vertices.buffer, 1, &copyRegion);
+		// Index buffer
+		copyRegion.size = indexBufferSize;
+		vkCmdCopyBuffer(copyCmd, stagingBuffers.indices.buffer, indices.buffer, 1, &copyRegion);
+		VK_CHECK_RESULT(vkEndCommandBuffer(copyCmd));
+
+		// Submit the command buffer to queue to finish the copy
+		VkSubmitInfo submitInfo{};
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &copyCmd;
+
+		// Create fence to ensure that the command buffer has finished executing
+		VkFenceCreateInfo fenceCI{};
+		fenceCI.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		fenceCI.flags = 0;
+		VkFence fence;
+		VK_CHECK_RESULT(vkCreateFence)
+	}
+
+	// This function is used to request a device memory type that supports all the property flags we request (e.g. device local, host visible)
+	// Upon success it will return the index of the memory type that fits our requested memory properties
+	// This is necessary as implementations can offer an arbitrary number of memory types with different
+	// memory properties.
+	// You can check https://vulkan.gpuinfo.org/ for details on different memory configurations
+	uint32_t getMemoryTypeIndex(uint32_t typeBits, VkMemoryPropertyFlags properties)
+	{
+		// Iterate over all memory types available for the device used in this example
+		for (uint32_t i = 0; i < deviceMemoryProperties.memoryTypeCount; i++)
+		{
+			if ((typeBits & 1) == 1)
+			{
+				if ((deviceMemoryProperties.memoryTypes[i].propertyFlags & properties) == properties)
+				{
+					return i;
+				}
+			}
+			typeBits >>= 1;
+		}
+
+		throw "Could not find a suitable memory type!";
+	}
+
+	void setupFrameBuffer()
+	{
+		VkImageView attachements[2];
+
+		// Depth/Stencil attachments is the same for all frame buffers
+		attachements[1] = depthStencil.view;
+
+		VkFramebufferCreateInfo frameBufferCreateInfo{};
+		frameBufferCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+		frameBufferCreateInfo.pNext = NULL;
+		frameBufferCreateInfo.renderPass = renderPass;
+		frameBufferCreateInfo.attachmentCount = 2;
+		frameBufferCreateInfo.pAttachments = attachements;
+		frameBufferCreateInfo.width = width;
+		frameBufferCreateInfo.height = height;
+		frameBufferCreateInfo.layers = 1;
+
+		// Create frame buffers for every swap chain image
+		frameBuffers.resize(swapChain.imageCount);
+		for (uint32_t i = 0; i < frameBuffers.size(); ++i)
+		{
+			attachements[0] = swapChain.buffers[i].view;
+			VK_CHECK_RESULT(vkCreateFramebuffer(logicalDevice, &frameBufferCreateInfo, nullptr, &frameBuffers[i]));
+		}
+	}
+
+	void setupRenderPass()
+	{
+		std::array<VkAttachmentDescription, 2> attachments = {};
+
+		// Color attachement
+		attachments[0].format = swapChain.colorFormat;
+		attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+		attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		attachments[0].stencilStoreOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+		// Depth attachment
+		// query depth format
+		VkFormat depthFormat;
+		std::vector<VkFormat> formatList = {
+			VK_FORMAT_D32_SFLOAT_S8_UINT,
+			VK_FORMAT_D24_UNORM_S8_UINT,
+			VK_FORMAT_D16_UNORM_S8_UINT,
+		};
+
+		for (auto& format : formatList)
+		{
+			VkFormatProperties formatProps;
+			vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &formatProps);
+			if (formatProps.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)
+			{
+				depthFormat = format;
+				break;
+			}
+		}
+		attachments[1].format = depthFormat;
+		attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+		attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		attachments[1].stencilStoreOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+		VkAttachmentReference colorReference{};
+		colorReference.attachment = 0;
+		colorReference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+		VkAttachmentReference depthReference{};
+		depthReference.attachment = 1;
+		depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+		VkSubpassDescription subpassDescription{};
+		subpassDescription.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpassDescription.colorAttachmentCount = 1;
+		subpassDescription.pColorAttachments = &colorReference;
+		subpassDescription.pDepthStencilAttachment = &depthReference;
+		subpassDescription.inputAttachmentCount = 0;
+		subpassDescription.pInputAttachments = nullptr;
+		subpassDescription.preserveAttachmentCount = 0;
+		subpassDescription.pPreserveAttachments = nullptr;
+		subpassDescription.pResolveAttachments = nullptr;
+
+		// subpass dependences for layout transitions
+		std::array<VkSubpassDependency, 2> dependencies;
+
+		dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+		dependencies[0].dstSubpass = 0;
+		dependencies[0].srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+		dependencies[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+		dependencies[0].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+		dependencies[0].dependencyFlags = 0;
+
+		dependencies[1].srcSubpass = VK_SUBPASS_EXTERNAL;
+		dependencies[1].dstSubpass = 0;
+		dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependencies[1].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependencies[1].srcAccessMask = 0;
+		dependencies[1].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+		dependencies[1].dependencyFlags = 0;
+		
+		VkRenderPassCreateInfo renderPassInfo{};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+		renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+		renderPassInfo.pAttachments = attachments.data();
+		renderPassInfo.subpassCount = 1;
+		renderPassInfo.pSubpasses = &subpassDescription;
+		renderPassInfo.dependencyCount = static_cast<uint32_t>(dependencies.size());
+		renderPassInfo.pDependencies = dependencies.data();
+
+		VK_CHECK_RESULT(vkCreateRenderPass(logicalDevice, &renderPassInfo, nullptr, &renderPass));
 	}
 
 	void renderLoop()
@@ -777,11 +1097,101 @@ public:
 	*/
 	void   createCommandPool()
 	{
-		VkCommandPoolCreateInfo cmdPoolInfo = {};
-		cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-		cmdPoolInfo.queueFamilyIndex = swapChain.queueNodeIndex;
-		cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-		VK_CHECK_RESULT(vkCreateCommandPool(device, &cmdPoolInfo, nullptr, &cmdPool));
+	}
+
+	void setupDepthStencil()
+	{
+		// query depth format
+		VkFormat depthFormat;
+		std::vector<VkFormat> formatList = {
+			VK_FORMAT_D32_SFLOAT_S8_UINT,
+			VK_FORMAT_D24_UNORM_S8_UINT,
+			VK_FORMAT_D16_UNORM_S8_UINT,
+		};
+
+		for (auto& format : formatList)
+		{
+			VkFormatProperties formatProps;
+			vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &formatProps);
+			if (formatProps.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)
+			{
+				depthFormat = format;
+				break;
+			}
+		}
+
+		// create depth stecial image
+		VkImageCreateInfo imageCI{};
+		imageCI.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		imageCI.imageType = VK_IMAGE_TYPE_2D;
+		imageCI.format = depthFormat;
+		imageCI.extent = { width, height, 1 };
+		imageCI.mipLevels = 1;
+		imageCI.arrayLayers = 1;
+		imageCI.samples = VK_SAMPLE_COUNT_1_BIT;
+		imageCI.tiling = VK_IMAGE_TILING_OPTIMAL;
+		imageCI.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+
+		VK_CHECK_RESULT(vkCreateImage(logicalDevice, &imageCI, nullptr, &depthStencil.image));
+		VkMemoryRequirements memReqs{};
+		vkGetImageMemoryRequirements(logicalDevice, depthStencil.image, &memReqs);
+
+		VkMemoryAllocateInfo memAlloc{};
+		memAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		memAlloc.allocationSize = memReqs.size;
+		memAlloc.memoryTypeIndex = getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		VK_CHECK_RESULT(vkAllocateMemory(logicalDevice, &memAlloc, nullptr, &depthStencil.mem));
+		VK_CHECK_RESULT(vkBindImageMemory(logicalDevice, depthStencil.image, depthStencil.mem, 0));
+
+		VkImageViewCreateInfo imageViewCI{};
+		imageViewCI.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		imageViewCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		imageViewCI.image = depthStencil.image;
+		imageViewCI.format = depthFormat;
+		imageViewCI.subresourceRange.baseMipLevel = 0;
+		imageViewCI.subresourceRange.levelCount = 1;
+		imageViewCI.subresourceRange.baseArrayLayer = 0;
+		imageViewCI.subresourceRange.layerCount = 1;
+		imageViewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+		// Stencil aspect should only be set on depth + stencil formats
+		if (depthFormat >= VK_FORMAT_D16_UNORM_S8_UINT)
+		{
+			imageViewCI.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+		}
+
+		VK_CHECK_RESULT(vkCreateImageView(logicalDevice, &imageViewCI, nullptr, &depthStencil.view));
+	}
+
+	/**
+	* Get the index of a memory type that has all the requested property bits set
+	*/
+	uint32_t getMemoryType(uint32_t typeBits, VkMemoryPropertyFlags properties, VkBool32* memTypeFound = nullptr) const
+	{
+		for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++)
+		{
+			if ((typeBits & 1) == 1)
+			{
+				if ((memoryProperties.memoryTypes[i].propertyFlags & properties) == properties)
+				{
+					if (memTypeFound)
+					{
+						*memTypeFound = true;
+					}
+					return i;
+				}
+			}
+			typeBits >>= 1;
+		}
+
+		if (memTypeFound)
+		{
+			*memTypeFound = false;
+			return 0;
+		}
+		else
+		{
+			throw std::runtime_error("Could not find a matching memory type");
+		}
 	}
 
 	void handleMessages(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
@@ -791,7 +1201,26 @@ public:
 
 
 public:
-	std::vector<VkFence> waitFences;
+	// Synchronization primitives
+// Synchronization is an important concept of Vulkan that OpenGL mostly hid away. Getting this right is crucial to using Vulkan.
+
+// Semaphores are used to coordinate operations within the graphics queue and ensure correct command ordering
+	std::array<VkSemaphore, MAX_CONCURRENT_FRAMES> presentCompleteSemaphores;
+	std::array<VkSemaphore, MAX_CONCURRENT_FRAMES> renderCompleteSemaphores;
+
+	std::array<VkCommandBuffer, MAX_CONCURRENT_FRAMES> commandBuffers;
+	std::array<VkFence, MAX_CONCURRENT_FRAMES> waitFences;
+
+	// List of available frame buffers (same as number of swap chain images)
+	std::vector<VkFramebuffer>frameBuffers;
+	// Global render pass for frame buffer writes
+	VkRenderPass renderPass = VK_NULL_HANDLE;
+	struct {
+		VkImage image;
+		VkDeviceMemory mem;
+		VkImageView view;
+	} depthStencil;
+	
 	GLFWwindow* window;
 	VkSurfaceKHR windowSurface;	// surface with respect to window
 	/** @brief Example settings that can be changed e.g. by command line arguments */
