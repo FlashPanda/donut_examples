@@ -830,7 +830,157 @@ public:
 
 	void renderLoop()
 	{
+		// message loop
 
+		render();
+	}
+
+	void render()
+	{
+		// Use a fence to wait until the command buffer has finished execution before using it again
+		vkWaitForFences(logicalDevice, 1, &waitFences[currentFrame], VK_TRUE, UINT64_MAX);
+
+		// Get the next swap chain image from the implementation
+		// Note that the implementation is free to return the images in any order, so we must use the acquire function and
+		// can't just cycle through the image
+		uint32_t imageIndex;
+		VkResult result = vkAcquireNextImageKHR(logicalDevice, swapChain.swapChain, UINT64_MAX,
+			presentCompleteSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+		if (result == VK_ERROR_OUT_OF_DATE_KHR)
+		{
+		}
+		else if ((result != VK_SUCCESS) && (result != VK_SUBOPTIMAL_KHR))
+		{
+			throw std::runtime_error("Could not acquire the next swap chain image");
+		}
+
+		// Update the uniform buffer for the next frame
+		ShaderData shaderData{};
+		donut::math::affine3 viewMatrix = donut::math::translation(math::float3(0, 0, -2));
+		donut::math::float4x4 projMatrix = donut::math::perspProjD3DStyle(math::radians(60.f), float(width) / float(height), 0.1f, 10.f);
+		donut::math::float4x4 viewProjMatrix = donut::math::affineToHomogeneous(viewMatrix) * projMatrix;
+		shaderData.modelMatrix = donut::math::float4x4();
+		shaderData.projectionMatrix = projMatrix;
+		shaderData.viewMatrix = viewMatrix;
+		// todo : view matrix
+
+		// Copy the current matrices to the current frame's uniform buffer
+		// Note: Since we requested a host coherent memory type for the uniform buffer,
+		// the write is instantly visible to the GPU 
+		memcpy(uniformBuffers[currentFrame].mapped, &shaderData, sizeof(ShaderData));
+
+		VK_CHECK_RESULT(vkResetFences(logicalDevice, 1, &waitFences[currentFrame]));
+
+		// Bind the command buffer
+		// Unlike in OpenGL all rendering commands are recorded into command buffers that are then submitted to the queue
+		// This allows to generate work upfront in a separate thread
+		// For basic command buffers (like in this sample), recording is so fast that there is no need to offload
+		// this
+		vkResetCommandBuffer(commandBuffers[currentBuffer], 0);
+
+		VkCommandBufferBeginInfo cmdBufInfo{};
+		cmdBufInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+		// Set clear values for all framebuffer attachements with loadOp set to clear
+		// We use two attachements (color and depth) that are cleared at the start of the subpass and 
+		// as such we need to set clear values for both
+		VkClearValue clearValues[2];
+		clearValues[0].color = { {0.f, 0.f, 0.2f, 1.f} };
+		clearValues[1].depthStencil = { 1.f, 0 };
+
+		VkRenderPassBeginInfo renderPassBeginInfo{};
+		renderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		renderPassBeginInfo.pNext = nullptr;
+		renderPassBeginInfo.renderPass = renderPass;
+		renderPassBeginInfo.renderArea.offset.x = 0;
+		renderPassBeginInfo.renderArea.offset.y = 0;
+		renderPassBeginInfo.renderArea.extent.width = width;
+		renderPassBeginInfo.renderArea.extent.height = height;
+		renderPassBeginInfo.clearValueCount = 2;
+		renderPassBeginInfo.pClearValues = clearValues;
+		renderPassBeginInfo.framebuffer = frameBuffers[imageIndex];
+		VK_CHECK_RESULT(vkBeginCommandBuffer(commandBuffers[currentBuffer], &cmdBufInfo));
+
+		// Start the first sub pass specified in our default render pass setup by the base class
+		// This will clear the color and depth attachment
+		vkCmdBeginRenderPass(commandBuffers[currentBuffer], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+		// Update dynamic viewport state
+		VkViewport viewport{};
+		viewport.height = (float)height;
+		viewport.width = (float)width;
+		viewport.minDepth = (float)0.f;
+		viewport.maxDepth = (float)1.f;
+		vkCmdSetViewport(commandBuffers[currentBuffer], 0, 1, &viewport);
+
+		// Update dynamic scissor state
+		VkRect2D scissor{};
+		scissor.extent.width = width;
+		scissor.extent.height = height;
+		scissor.offset.x = 0;
+		scissor.offset.y = 0;
+		vkCmdSetScissor(commandBuffers[currentBuffer], 0, 1, &scissor);
+		// Bind descriptor set for the current frame's uniform buffer, so the shader uses the data from that buffer for this draw
+		vkCmdBindDescriptorSets(commandBuffers[currentBuffer], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, 
+			&uniformBuffers[currentBuffer].descriptorSet, 0, nullptr);
+		// Bind the rendering pipeline
+		// The pipeline (state object) contains all states of the rendering pipeline, binding it will set all the states
+		// specified at pipeline creation time
+		vkCmdBindPipeline(commandBuffers[currentBuffer], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+		// Bind triangle vertex buffer (contains position and colors)
+		VkDeviceSize offsets[1]{ 0 };
+		vkCmdBindVertexBuffers(commandBuffers[currentBuffer], 0, 1, &vertices.buffer, offsets);
+		// Bind triangle index buffer
+		vkCmdBindIndexBuffer(commandBuffers[currentBuffer], indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+		// Draw indexed triangle
+		vkCmdDrawIndexed(commandBuffers[currentBuffer], indices.count, 1, 0, 0, 1);
+		vkCmdEndRenderPass(commandBuffers[currentBuffer]);
+		// Ending the render pass will add an implicit barrier transitioning the frame buffer color attachment to 
+		// VK_IMAGE_LAYOUT_PRESENT_SRC_KHR for presengint it to the windowing system
+		VK_CHECK_RESULT(vkEndCommandBuffer(commandBuffers[currentBuffer]));
+
+		// Submit the command buffer to the graphics queue
+
+		// Pipeline stage at which the queue submission will wait (via pWaitSemaphores)
+		VkPipelineStageFlags waitStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		// The submit info structure specifies a command buffer queue submission batch
+		VkSubmitInfo submitInfo{};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		submitInfo.pWaitDstStageMask = &waitStageMask;	// Pointer to the list of pipeline stages that the semaphore waits will occur at
+		submitInfo.waitSemaphoreCount = 1;				// One wait semaphore
+		submitInfo.signalSemaphoreCount = 1;			// One signal semaphore
+		submitInfo.pCommandBuffers = &commandBuffers[currentBuffer];	// Command buffers(s) to execute in this batch (submission)
+		submitInfo.commandBufferCount = 1;		// One cummand buffer
+
+		// Semaphore to wait upon before the submitted command buffer starts executing
+		submitInfo.pWaitSemaphores = &presentCompleteSemaphores[currentFrame];
+		// Semaphore to be signaled when command buffers have completed
+		submitInfo.pSignalSemaphores = &renderCompleteSemaphores[currentFrame];
+
+		// Submit to the graphics queue passing a wait fence
+		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, waitFences[currentFrame]));
+
+		// Present the current frame buffer to the swap chain
+		// Pass the semaphore signaled by the command buffer submission from the submit info as the wait semaphore for swap chain presentation
+		// This ensures that the image is not presented to the windowing system until all commands have been submitted
+
+		VkPresentInfoKHR presentInfo{};
+		presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+		presentInfo.waitSemaphoreCount = 1;
+		presentInfo.pWaitSemaphores = &renderCompleteSemaphores[currentFrame];
+		presentInfo.swapchainCount = 1;
+		presentInfo.pSwapchains = &swapChain.swapChain;
+		presentInfo.pImageIndices = &imageIndex;
+		presentInfo.pImageIndices = &imageIndex;
+		result = vkQueuePresentKHR(queue, &presentInfo);
+
+		if ((result == VK_ERROR_OUT_OF_DATE_KHR) || (result == VK_SUBOPTIMAL_KHR))
+		{
+			//windowResize();
+		}
+		else if (result != VK_SUCCESS)
+		{
+			throw std::runtime_error("Could not present the image to the swap chain!");
+		}
 	}
 
 	//void getEnabledFeatures() {
@@ -1199,7 +1349,359 @@ public:
 
 	}
 
+	void createUniformBuffer()
+	{
+		// Prepare and initialize the per-frame uniform buffer blocks containing shader uniforms
+		// Single uniforms like in OpenGL are no longer present in Vulkan. All Shader uniforms are passed via uniform buffer blocks
+		VkMemoryRequirements memReqs;
 
+		// Vertex shader uniform buffer block
+		VkBufferCreateInfo bufferInfo{};
+		VkMemoryAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocInfo.pNext = nullptr;
+		allocInfo.allocationSize = 0;
+		allocInfo.allocationSize = 0;
+
+		bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bufferInfo.size = sizeof(ShaderData);
+		// This buffer will be used as a uniform buffer
+		bufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+
+		// Create the buffers
+		for (uint32_t i = 0; i < MAX_CONCURRENT_FRAMES; ++i)
+		{
+			VK_CHECK_RESULT(vkCreateBuffer(logicalDevice, &bufferInfo, nullptr, &uniformBuffers[i].buffer));
+			// Get memory requirements including size, alignment and memory type
+			vkGetBufferMemoryRequirements(logicalDevice, uniformBuffers[i].buffer, &memReqs);
+			allocInfo.allocationSize = memReqs.size;
+			// Get the memory type index that supports host visible memory access
+			// Most implementations offer multiple memory types and selecting the correct one to allocate memory from is crucial
+			// We also want the buffer to be host coherent so we don't have to flush (or sync after every update.
+			// Note: This may affect performance so you might not want to do this in a real world application that updates buffers on a regular base
+			allocInfo.memoryTypeIndex = getMemoryTypeIndex(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+			// Allocate memory for the uniform buffer
+			VK_CHECK_RESULT(vkAllocateMemory(logicalDevice, &allocInfo, nullptr, &(uniformBuffers[i].memory)));
+			// Bind memory to buffer
+			VK_CHECK_RESULT(vkBindBufferMemory(logicalDevice, uniformBuffers[i].buffer, uniformBuffers[i].memory, 0));
+			// We map the buffer once, so we can update it without having to map it again
+			VK_CHECK_RESULT(vkMapMemory(logicalDevice, uniformBuffers[i].memory, 0, sizeof(ShaderData), 0, (void**)&uniformBuffers[i].mapped));
+		}
+	}
+
+	// Descriptor set layouts define the interface between our application and the shader
+	// Basically connects the different shader stages to descriptors for binding uniform buffers, image samplers. etc
+	// So every shader binding should map to one descriptor set layout binding
+	void createDescriptorSetLayout()
+	{
+		// Binding 0 : Uniform buffer (Vertex shader)
+		// Resources are bound to binding points in the descriptor set. 
+		VkDescriptorSetLayoutBinding layoutBinding{};
+		layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		layoutBinding.descriptorCount = 1;
+		layoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+		layoutBinding.pImmutableSamplers = nullptr;
+
+		VkDescriptorSetLayoutCreateInfo descriptorLayoutCI{};
+		descriptorLayoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		descriptorLayoutCI.pNext = nullptr;
+		descriptorLayoutCI.bindingCount = 1;
+		descriptorLayoutCI.pBindings = &layoutBinding;
+		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(logicalDevice, &descriptorLayoutCI, nullptr, &descriptorSetLayout));
+
+		// Create the pipeline layout that is used to ganerate the rendering pipelines that are based on tis descriptor set layout
+		// In a more complex scenario you would have different pipeline layouts for different descriptor set layouts that could be reused
+		VkPipelineLayoutCreateInfo pipelineLayoutCI{};
+		pipelineLayoutCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		pipelineLayoutCI.pNext = nullptr;
+		pipelineLayoutCI.setLayoutCount = 1;
+		pipelineLayoutCI.pSetLayouts = &descriptorSetLayout;
+		VK_CHECK_RESULT(vkCreatePipelineLayout(logicalDevice, &pipelineLayoutCI, nullptr, &pipelineLayout));
+	}
+
+	// Descriptors are allocated from a pool, that tells the implementation how many and what
+	// types of descriptors we are going to use (at maximum)
+	void createDescriptorPool()
+	{
+		// We need to tell the API the number of max. requested descriptors per type
+		VkDescriptorPoolSize descriptorTypeCounts[1];
+		// This examples only one descriptor type (uniform buffer)
+		descriptorTypeCounts[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		// We have one buffer (and as such descriptor) per frame
+		descriptorTypeCounts[0].descriptorCount = MAX_CONCURRENT_FRAMES;
+		// For additional types you need to add new entries in the type count list
+		// E.g. for two combined image samplers:
+		// typeCounts[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		// typeCounts[1].descriptorCount = 2;
+
+		// Create the global descriptor pool
+		// All descriptors used in this example are allocated from this pool
+		VkDescriptorPoolCreateInfo descriptorPoolCI{};
+		descriptorPoolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		descriptorPoolCI.pNext = nullptr;
+		descriptorPoolCI.poolSizeCount = 1;
+		descriptorPoolCI.pPoolSizes = descriptorTypeCounts;
+		// Set the max. number of descriptor sets that can be requested from this pool (requesting beyond this limit will result in an error)
+		// Our sample will create one set per uniform buffer per frame
+		descriptorPoolCI.maxSets = MAX_CONCURRENT_FRAMES;
+		VK_CHECK_RESULT(vkCreateDescriptorPool(logicalDevice, &descriptorPoolCI, nullptr, &descriptorPool));
+	}
+
+	// Shaders access data using descriptor sets that "point" at our uniform buffers
+	// The descriptor sets make use of the descriptor set layouts create above
+	void createDescriptorSets()
+	{
+		// Allocate one descriptor set per frame from the global descriptor pool
+		for (uint32_t i = 0; i < MAX_CONCURRENT_FRAMES; ++i)
+		{
+			VkDescriptorSetAllocateInfo allocInfo{};
+			allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+			allocInfo.descriptorPool = descriptorPool;
+			allocInfo.descriptorSetCount = 1;
+			allocInfo.pSetLayouts = &descriptorSetLayout;
+			VK_CHECK_RESULT(vkAllocateDescriptorSets(logicalDevice, &allocInfo, &uniformBuffers[i].descriptorSet));
+
+			// Update the descriptor set determining the shader binding points
+			// For every binding point used in a shader there needs to be one
+			// descriptor set matching that binding point
+			VkWriteDescriptorSet writeDescriptorSet{};
+
+			// The buffer's information is passed using a descriptor info structure
+			VkDescriptorBufferInfo bufferInfo{};
+			bufferInfo.buffer = uniformBuffers[i].buffer;
+			bufferInfo.range = sizeof(ShaderData);
+
+			// Binding 0 : Uniform buffer
+			writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writeDescriptorSet.dstSet = uniformBuffers[i].descriptorSet;
+			writeDescriptorSet.descriptorCount = 1;
+			writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			writeDescriptorSet.pBufferInfo = &bufferInfo;
+			writeDescriptorSet.dstBinding = 0;
+			vkUpdateDescriptorSets(logicalDevice, 1, &writeDescriptorSet, 0, nullptr);
+		}
+	}
+
+	void createPipelines()
+	{
+		// Create the graphics pipeline used in this example
+		// Vulkan uses the concept of rendering pipelines to encapsulate fixed states, replacing OpenGL's complex state machine
+		// A pipeline is then stored and hased on the GPU making pipeline changes very fast
+		// Note: There are still a few dynammic states that are not directly part of the pipeline (but the info that they are used is) 
+		
+		VkGraphicsPipelineCreateInfo pipelineCI{};
+		pipelineCI.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		// The layout used for this pipeline (can be shared among multiple pipelines using the same layout)
+		pipelineCI.layout = pipelineLayout;
+		// Renderpass this pipeline is attached to 
+		pipelineCI.renderPass = renderPass;
+
+		/** Construct the different states making up the pipeline */
+
+		// Input assembly state describes how primitives are assembled
+		// This pipeline will assemble vertex data as a triangle lists (though we only use one triangle)
+		VkPipelineInputAssemblyStateCreateInfo inputAssemblyStateCI{};
+		inputAssemblyStateCI.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+		inputAssemblyStateCI.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+		
+
+		// Rasterization state
+		VkPipelineRasterizationStateCreateInfo rasterizationStateCI{};
+		rasterizationStateCI.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+		rasterizationStateCI.polygonMode = VK_POLYGON_MODE_FILL;
+		rasterizationStateCI.cullMode = VK_CULL_MODE_NONE;
+		rasterizationStateCI.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+		rasterizationStateCI.depthClampEnable = VK_FALSE;
+		rasterizationStateCI.rasterizerDiscardEnable = VK_FALSE;
+		rasterizationStateCI.depthBiasEnable = VK_FALSE;
+		rasterizationStateCI.lineWidth = 1.f;
+
+		// Color blend state describes how blend factors are calculated (if used)
+		// We need one blend attachment state per color attachment (even if blending is not used)
+		VkPipelineColorBlendAttachmentState blendAttachmentState{};
+		blendAttachmentState.colorWriteMask = 0xf;
+		blendAttachmentState.blendEnable = VK_FALSE;
+		VkPipelineColorBlendStateCreateInfo colorBlendStateCI{};
+		colorBlendStateCI.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+		colorBlendStateCI.attachmentCount = 1;
+		colorBlendStateCI.pAttachments = &blendAttachmentState;
+
+		// Viewport state sets the number of viewports and scissor used in this pipeline
+		// Note: This is actually overridden by the dynamic states (see below)
+		VkPipelineViewportStateCreateInfo viewportStateCI{};
+		viewportStateCI.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+		viewportStateCI.viewportCount = 1;
+		viewportStateCI.scissorCount = 1;
+
+		// Enable dynamic states
+		// Most states are baked into the pipeline, but here are still a few dynamic states that can be changed within  a command buffer
+		// To be able to change these we need do specify which dynamic states will be changed using this pipeline. 
+		// Their actual states are set later on in the command buffer.
+		// For this example we will set the viewport and scissor using dynamic states
+		std::vector<VkDynamicState> dynamicStateEnables;
+		dynamicStateEnables.push_back(VK_DYNAMIC_STATE_VIEWPORT);
+		dynamicStateEnables.push_back(VK_DYNAMIC_STATE_SCISSOR);
+		VkPipelineDynamicStateCreateInfo dynamicStateCI{};
+		dynamicStateCI.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+		dynamicStateCI.pDynamicStates = dynamicStateEnables.data();
+		dynamicStateCI.dynamicStateCount = static_cast<uint32_t>(dynamicStateEnables.size());
+
+		// Depth and stencil state containing depth and stencil compare and test operations
+		// We only use depth tests and want depth tests and writes to be enabled and compare with less or equal
+		VkPipelineDepthStencilStateCreateInfo depthStencilStateCI{};
+		depthStencilStateCI.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+		depthStencilStateCI.depthTestEnable = VK_TRUE;
+		depthStencilStateCI.depthWriteEnable = VK_TRUE;
+		depthStencilStateCI.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+		depthStencilStateCI.depthBoundsTestEnable = VK_FALSE;
+		depthStencilStateCI.back.failOp = VK_STENCIL_OP_KEEP;
+		depthStencilStateCI.back.passOp = VK_STENCIL_OP_KEEP;
+		depthStencilStateCI.back.compareOp = VK_COMPARE_OP_ALWAYS;
+		depthStencilStateCI.stencilTestEnable = VK_FALSE;
+		depthStencilStateCI.front = depthStencilStateCI.back;
+
+		// Multi sampling state
+		// This example does not make use of multi sampling (for anti-aliasing), this state
+		// must still be set and passed to the pipeline
+		VkPipelineMultisampleStateCreateInfo multisampleStateCI{};
+		multisampleStateCI.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+		multisampleStateCI.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+		multisampleStateCI.pSampleMask = nullptr;
+
+		// Vertex input descriptions
+		// Specified the vertex input parameters for a pipeline
+
+		// Vertex input binding
+		// This example uses a single vertex input binding at binding point 0 (see vkCmdBindVertexBuffers)
+		VkVertexInputBindingDescription vertexInputBinding{};
+		vertexInputBinding.binding = 0;
+		vertexInputBinding.stride = sizeof(Vertex);
+		vertexInputBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+		// Input attribute binding describe shader attribute locations and memory layouts
+		std::array<VkVertexInputAttributeDescription, 2> vertexInputAttributes;
+		// These match the following shader layout (see triangle.vert):
+		// layout (location = 0) in vec3 inPos;
+		// layout (location = 1) in vec3 inColor;
+		// Attribute location 0: Position
+		vertexInputAttributes[0].binding = 0;
+		vertexInputAttributes[0].location = 0;
+		// Position attribute is three 32 bit signed (SFLOT) floats (R32 G32 B32)
+		vertexInputAttributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+		vertexInputAttributes[0].offset = offsetof(Vertex, position);
+		
+		// Attribute location 1: Color
+		vertexInputAttributes[1].binding = 0;
+		vertexInputAttributes[1].location = 1;
+		// Color attribute is three 32 bit signed (SFLOAT) floats (R32 G32 B32)
+		vertexInputAttributes[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+		vertexInputAttributes[1].offset = offsetof(Vertex, position);
+
+		// Vertex input state used for pipeline creation
+		VkPipelineVertexInputStateCreateInfo vertexInputStateCI{};
+		vertexInputStateCI.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+		vertexInputStateCI.vertexBindingDescriptionCount = 1;
+		vertexInputStateCI.pVertexBindingDescriptions = &vertexInputBinding;
+		vertexInputStateCI.vertexAttributeDescriptionCount = 2;
+		vertexInputStateCI.pVertexAttributeDescriptions = vertexInputAttributes.data();
+
+		// Shaders
+		std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages{};
+
+		// Vertex shader
+		shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		// Set pipeline stage for this shader
+		shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+		shaderStages[0].module = loadSPIRVShader(getShaderPath() + "triangle/triangle.vert.spv");
+		// Main entry point for the shader
+		shaderStages[0].pName = "main";
+		assert(shaderStages[0].module != VK_NULL_HANDLE);
+
+		// Fragment shader
+		shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		// Set pipeline stage for this shader
+		shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+		// Load binary SPIR-V shader
+		shaderStages[1].module = loadSPIRVShader(getShaderPath() + "triangle/triangle.vert.spv");
+		// Main entry point for the shader
+		shaderStages[1].pName = "main";
+		assert(shaderStages[1].module != VK_NULL_HANDLE);
+
+		// Set pipeline shader stage info
+		pipelineCI.stageCount = static_cast<uint32_t>(shaderStages.size());
+		pipelineCI.pStages = shaderStages.data();
+
+		// Assign the pipeline states to the pipeline creation info structure
+		pipelineCI.pVertexInputState = &vertexInputStateCI;
+		pipelineCI.pInputAssemblyState = &inputAssemblyStateCI;
+		pipelineCI.pRasterizationState = &rasterizationStateCI;
+		pipelineCI.pColorBlendState = &colorBlendStateCI;
+		pipelineCI.pMultisampleState = &multisampleStateCI;
+		pipelineCI.pViewportState = &viewportStateCI;
+		pipelineCI.pDepthStencilState = &depthStencilStateCI;
+		pipelineCI.pDynamicState = &dynamicStateCI;
+
+		// Create rendering pipeline using the specified states
+		VK_CHECK_RESULT(vkCreateGraphicsPipelines(logicalDevice, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline));
+
+		// Shader modules are no longer needed once the graphics pipeline has been created
+		vkDestroyShaderModule(logicalDevice, shaderStages[0].module, nullptr);
+		vkDestroyShaderModule(logicalDevice, shaderStages[1].module, nullptr);
+	}
+
+	// Vulkan loads its shaders from an immediate binary representation called SPIR-V
+// Shaders are compiled offline from e.g. GLSL using the reference glslang compiler
+// This function loads such a shader from a binary file and returns a shader module structure
+	VkShaderModule loadSPIRVShader(std::string filename)
+	{
+		size_t shaderSize;
+		char* shaderCode{ nullptr };
+
+#if defined(__ANDROID__)
+		// Load shader from compressed asset
+		AAsset* asset = AAssetManager_open(androidApp->activity->assetManager, filename.c_str(), AASSET_MODE_STREAMING);
+		assert(asset);
+		shaderSize = AAsset_getLength(asset);
+		assert(shaderSize > 0);
+
+		shaderCode = new char[shaderSize];
+		AAsset_read(asset, shaderCode, shaderSize);
+		AAsset_close(asset);
+#else
+		std::ifstream is(filename, std::ios::binary | std::ios::in | std::ios::ate);
+
+		if (is.is_open())
+		{
+			shaderSize = is.tellg();
+			is.seekg(0, std::ios::beg);
+			// Copy file contents into a buffer
+			shaderCode = new char[shaderSize];
+			is.read(shaderCode, shaderSize);
+			is.close();
+			assert(shaderSize > 0);
+		}
+#endif
+		if (shaderCode)
+		{
+			// Create a new shader module that will be used for pipeline creation
+			VkShaderModuleCreateInfo shaderModuleCI{};
+			shaderModuleCI.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+			shaderModuleCI.codeSize = shaderSize;
+			shaderModuleCI.pCode = (uint32_t*)shaderCode;
+
+			VkShaderModule shaderModule;
+			VK_CHECK_RESULT(vkCreateShaderModule(device, &shaderModuleCI, nullptr, &shaderModule));
+
+			delete[] shaderCode;
+
+			return shaderModule;
+		}
+		else
+		{
+			std::cerr << "Error: Could not open shader file \"" << filename << "\"" << std::endl;
+			return VK_NULL_HANDLE;
+		}
+	}
 public:
 	// Synchronization primitives
 // Synchronization is an important concept of Vulkan that OpenGL mostly hid away. Getting this right is crucial to using Vulkan.
@@ -1296,6 +1798,50 @@ public:
 	// So for each combination of non-dynamic pipeline states you need a new pipeline(there are a few expections to this not discussed here)
 	// Even though this adds a new dimension of planning ahead, it's a great opportunity for performance optimizations by the driver
 	VkPipeline pipeline;
+
+	// For simplicity we use the same uniform block layout as in the shader:
+	//
+	//	layout(set = 0, binding = 0) uniform UBO
+	//	{
+	//		mat4 projectionMatrix;
+	//		mat4 modelMatrix;
+	//		mat4 viewMatrix;
+	//	} ubo;
+	//
+	// This way we can just memcopy the ubo data to the ubo
+	// Note: You should use data types that align with the GPU in order to avoid manual padding (vec4, mat4)
+	struct ShaderData {
+		donut::math::float4x4 projectionMatrix;
+		donut::math::float4x4 modelMatrix;
+		donut::math::float4x4 viewMatrix;
+	};
+
+	// Uniform buffer block object
+	struct UniformBuffer {
+		VkDeviceMemory memory;
+		VkBuffer buffer;
+		// The descriptor set stores the resources bound to the binding points in a shader
+		// It connects the binding points of the different shaders with the buffers and images used for those bindings
+		VkDescriptorSet descriptorSet;
+		// We keep a pointer to the mapped buffer, so we can easily update it's contents via a memcpy
+		uint8_t* mapped{ nullptr };
+	};
+
+	// We use one UBO per frame, so we can have a frame overlap and make sure that uniforms aren't updated while still in use
+	std::array<UniformBuffer, MAX_CONCURRENT_FRAMES> uniformBuffers;
+
+	// The descriptor set layout describes the shader binding layout (without actually referencing descriptor)
+	// Like the pipeline layout it's pretty much a blueprint and can be used with different descriptor sets as long as their layout matches
+	VkDescriptorSetLayout descriptorSetLayout;
+	// Descriptor set pool
+	VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+
+	uint32_t currentFrame = 0;
+	// Active frame buffer index
+	uint32_t currentBuffer = 0;
+
+	// Handle to the device graphics queue that command buffers are submitted to
+	VkQueue queue;
 };
 
 #ifdef WIN32
@@ -1314,7 +1860,7 @@ int main(int __argc, const char** __argv)
 {
 	deviceVulkan.initVulkan();
 	deviceVulkan.setupWindow(hInstance, WndProc);
-	deviceVulkan.prePrepare();
 	deviceVulkan.prepare();
+	deviceVulkan.renderLoop();
     return 0;
 }
