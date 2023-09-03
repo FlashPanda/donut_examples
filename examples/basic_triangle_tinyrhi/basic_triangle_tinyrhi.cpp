@@ -86,7 +86,7 @@ public:
 	{
 		surface = windowSurface;
 		// Get available queue family properties
-		uint32_t queueCount;
+		uint32_t queueCount = 0;
 		vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueCount, NULL);
 		assert(queueCount >= 1);
 
@@ -456,6 +456,8 @@ public:
 			return false;
 		}
 
+		swapChain.connect(instance, physicalDevice, logicalDevice);
+
 
 		return true;
 	}
@@ -467,7 +469,7 @@ public:
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-		window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Vulkan", nullptr, nullptr);
+		window = glfwCreateWindow(1280, 720, "Vulkan", nullptr, nullptr);
 
 		// create window surface with respect to window
 		if (glfwCreateWindowSurface(instance, window, nullptr, &windowSurface) != VK_SUCCESS) {
@@ -482,7 +484,7 @@ public:
 		commandPoolCI.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
 		commandPoolCI.queueFamilyIndex = swapChain.queueNodeIndex;
 		commandPoolCI.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-		VK_CHECK_RESULT(vkCreateCommandPool(logicalDevice, &commandPoolCI, nullptr, commandPool));
+		VK_CHECK_RESULT(vkCreateCommandPool(logicalDevice, &commandPoolCI, nullptr, &commandPool));
 
 		// Allocate one command buffer per max. concurrent frame from above pool
 		VkCommandBufferAllocateInfo cmdBufAllocateInfo{};
@@ -490,7 +492,7 @@ public:
 		cmdBufAllocateInfo.commandPool = commandPool;
 		cmdBufAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 		cmdBufAllocateInfo.commandBufferCount = MAX_CONCURRENT_FRAMES;
-		VK_CHECK_RESULT(vkAllocateCommandBuffers(logicalDevice, &cmdBufAllocateInfo, commandbu))
+		VK_CHECK_RESULT(vkAllocateCommandBuffers(logicalDevice, &cmdBufAllocateInfo, commandBuffers.data()));
 	}
 
 	void createSynchronizationPrimitives()
@@ -512,16 +514,6 @@ public:
 			fenceCI.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 			VK_CHECK_RESULT(vkCreateFence(logicalDevice, &fenceCI, nullptr, &waitFences[i]));
 		}
-	}
-
-	void createPipelines()
-	{
-		// Vulkan uses the concept of rendering pipelines to encapsulate fixed states, replacing OpenGL's complex state machine
-		// A pipeline is then stored and hashed on the GPU making pipeline changes very fast
-		VkGraphicsPipelineCreateInfo pipelineCI{};
-		pipelineCI.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-		// The layout used for this pipeline (can be shared among multple pipelines using the same layout)
-		pipelineCI.layout = pipelineLay
 	}
 
 	void prepare()
@@ -611,7 +603,7 @@ public:
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 		VK_CHECK_RESULT(vkAllocateMemory(logicalDevice, &memAlloc, nullptr, &stagingBuffers.vertices.memory));
 		// Map and copy
-		VK_CHECK_RESULT(vkMapMemory(device, stagingBuffers.vertices.memory, 0, memAlloc.allocationSize, 0, &data));
+		VK_CHECK_RESULT(vkMapMemory(logicalDevice, stagingBuffers.vertices.memory, 0, memAlloc.allocationSize, 0, &data));
 		memcpy(data, vertexBuffer.data(), vertexBufferSize);
 		vkUnmapMemory(logicalDevice, stagingBuffers.vertices.memory);
 		VK_CHECK_RESULT(vkBindBufferMemory(logicalDevice, stagingBuffers.vertices.buffer,
@@ -642,7 +634,11 @@ public:
 		VK_CHECK_RESULT(vkMapMemory(logicalDevice, stagingBuffers.indices.memory, 0, indexBufferSize, 0, &data));
 		memcpy(data, indexBuffer.data(), indexBufferSize);
 		vkUnmapMemory(logicalDevice, stagingBuffers.indices.memory);
-		VK_CHECK_RESULT(vkBindBufferMemory(logicalDevice, &indexbufferCI, nullptr, &indices.buffer));
+		VK_CHECK_RESULT(vkBindBufferMemory(logicalDevice, stagingBuffers.indices.buffer, stagingBuffers.indices.memory, 0));
+
+		// Create destination buffer with device only visibility
+		indexbufferCI.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+		VK_CHECK_RESULT(vkCreateBuffer(logicalDevice, &indexbufferCI, nullptr, &indices.buffer));
 		vkGetBufferMemoryRequirements(logicalDevice, indices.buffer, &memReqs);
 		memAlloc.allocationSize = memReqs.size;
 		memAlloc.memoryTypeIndex = getMemoryTypeIndex(memReqs.memoryTypeBits,
@@ -684,7 +680,22 @@ public:
 		fenceCI.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 		fenceCI.flags = 0;
 		VkFence fence;
-		VK_CHECK_RESULT(vkCreateFence)
+		VK_CHECK_RESULT(vkCreateFence(logicalDevice, &fenceCI, nullptr, &fence));
+
+		// Submit to the queue
+		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, fence));
+		// Wait for the fence to signal the command buffer has finished executing
+		VK_CHECK_RESULT(vkWaitForFences(logicalDevice, 1, &fence, VK_TRUE, 100000000000));
+
+		vkDestroyFence(logicalDevice, fence, nullptr);
+		vkFreeCommandBuffers(logicalDevice, commandPool, 1, &copyCmd);
+
+		// Destroy staging buffers
+		// Note: Staging buffer must not be deleted before the copies have been submitted and executed
+		vkDestroyBuffer(logicalDevice, stagingBuffers.vertices.buffer, nullptr);
+		vkFreeMemory(logicalDevice, stagingBuffers.vertices.memory, nullptr);
+		vkDestroyBuffer(logicalDevice, stagingBuffers.indices.buffer, nullptr);
+		vkFreeMemory(logicalDevice, stagingBuffers.indices.memory, nullptr);
 	}
 
 	// This function is used to request a device memory type that supports all the property flags we request (e.g. device local, host visible)
@@ -746,7 +757,7 @@ public:
 		attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 		attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 		attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-		attachments[0].stencilStoreOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 		attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 		attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
@@ -774,7 +785,7 @@ public:
 		attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 		attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 		attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-		attachments[1].stencilStoreOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 		attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 		attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
@@ -831,8 +842,12 @@ public:
 	void renderLoop()
 	{
 		// message loop
+		while (!glfwWindowShouldClose(m_Window))
+		{
 
-		render();
+			glfwPollEvents();
+			render();
+		}
 	}
 
 	void render()
@@ -856,13 +871,12 @@ public:
 
 		// Update the uniform buffer for the next frame
 		ShaderData shaderData{};
-		donut::math::affine3 viewMatrix = donut::math::translation(math::float3(0, 0, -2));
-		donut::math::float4x4 projMatrix = donut::math::perspProjD3DStyle(math::radians(60.f), float(width) / float(height), 0.1f, 10.f);
+		donut::math::affine3 viewMatrix = donut::math::translation(donut::math::float3(0, 0, -2));
+		donut::math::float4x4 projMatrix = donut::math::perspProjD3DStyle(donut::math::radians(60.f), float(width) / float(height), 0.1f, 10.f);
 		donut::math::float4x4 viewProjMatrix = donut::math::affineToHomogeneous(viewMatrix) * projMatrix;
 		shaderData.modelMatrix = donut::math::float4x4();
 		shaderData.projectionMatrix = projMatrix;
-		shaderData.viewMatrix = viewMatrix;
-		// todo : view matrix
+		shaderData.viewMatrix = donut::math::affineToHomogeneous(viewMatrix);
 
 		// Copy the current matrices to the current frame's uniform buffer
 		// Note: Since we requested a host coherent memory type for the uniform buffer,
@@ -1245,8 +1259,15 @@ public:
 	*
 	* @return A handle to the created command buffer
 	*/
-	void   createCommandPool()
+	VkCommandPool   createCommandPool(uint32_t queueFamilyIndex, VkCommandPoolCreateFlags createFlags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT)
 	{
+		VkCommandPoolCreateInfo cmdPoolInfo = {};
+		cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+		cmdPoolInfo.queueFamilyIndex = queueFamilyIndex;
+		cmdPoolInfo.flags = createFlags;
+		VkCommandPool cmdPool;
+		VK_CHECK_RESULT(vkCreateCommandPool(logicalDevice, &cmdPoolInfo, nullptr, &cmdPool));
+		return cmdPool;
 	}
 
 	void setupDepthStencil()
@@ -1317,11 +1338,11 @@ public:
 	*/
 	uint32_t getMemoryType(uint32_t typeBits, VkMemoryPropertyFlags properties, VkBool32* memTypeFound = nullptr) const
 	{
-		for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++)
+		for (uint32_t i = 0; i < deviceMemoryProperties.memoryTypeCount; i++)
 		{
 			if ((typeBits & 1) == 1)
 			{
-				if ((memoryProperties.memoryTypes[i].propertyFlags & properties) == properties)
+				if ((deviceMemoryProperties.memoryTypes[i].propertyFlags & properties) == properties)
 				{
 					if (memTypeFound)
 					{
@@ -1690,7 +1711,7 @@ public:
 			shaderModuleCI.pCode = (uint32_t*)shaderCode;
 
 			VkShaderModule shaderModule;
-			VK_CHECK_RESULT(vkCreateShaderModule(device, &shaderModuleCI, nullptr, &shaderModule));
+			VK_CHECK_RESULT(vkCreateShaderModule(logicalDevice, &shaderModuleCI, nullptr, &shaderModule));
 
 			delete[] shaderCode;
 
@@ -1701,6 +1722,11 @@ public:
 			std::cerr << "Error: Could not open shader file \"" << filename << "\"" << std::endl;
 			return VK_NULL_HANDLE;
 		}
+	}
+
+	std::string getShaderPath()
+	{
+		return "C:/Developer/Vulkan/shaders/";
 	}
 public:
 	// Synchronization primitives
