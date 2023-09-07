@@ -533,6 +533,12 @@ public:
 		createCommandBuffers();
 
 		createVertexBuffer();
+
+		createUniformBuffers();
+		createDescriptorSetLayout();
+		createDescriptorPool();
+		createDescriptorSets();
+		createPipelines();
 	}
 
 	// Prepare vertex and index buffers for an indexed triangle
@@ -556,9 +562,7 @@ public:
 		indices.count = static_cast<uint32_t> (indexBuffer.size());
 		uint32_t indexBufferSize = indices.count * sizeof(uint32_t);
 
-		VkMemoryAllocateInfo memAlloc{};
-		memAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-		VkMemoryRequirements memReqs;
+
 
 		// Static data like vertex and index buffer should be stored on the device memory for optimal
 		// (and fastest) access by the GPU
@@ -586,7 +590,7 @@ public:
 			StagingBuffer indices;
 		} stagingBuffers;
 
-		void* data;
+		
 
 		// Vertex buffer
 		VkBufferCreateInfo vertexBufferInfoCI{};
@@ -595,6 +599,9 @@ public:
 		// Buffer is used as the copy source
 		vertexBufferInfoCI.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 		VK_CHECK_RESULT(vkCreateBuffer(logicalDevice, &vertexBufferInfoCI, nullptr, &stagingBuffers.vertices.buffer));
+		VkMemoryAllocateInfo memAlloc{};
+		memAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		VkMemoryRequirements memReqs;
 		vkGetBufferMemoryRequirements(logicalDevice, stagingBuffers.vertices.buffer, &memReqs);
 		memAlloc.allocationSize = memReqs.size;
 		// Request a host visible memory type that can be used to copy our data to
@@ -602,6 +609,7 @@ public:
 		memAlloc.memoryTypeIndex = getMemoryTypeIndex(memReqs.memoryTypeBits,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 		VK_CHECK_RESULT(vkAllocateMemory(logicalDevice, &memAlloc, nullptr, &stagingBuffers.vertices.memory));
+		void* data;
 		// Map and copy
 		VK_CHECK_RESULT(vkMapMemory(logicalDevice, stagingBuffers.vertices.memory, 0, memAlloc.allocationSize, 0, &data));
 		memcpy(data, vertexBuffer.data(), vertexBufferSize);
@@ -1370,7 +1378,7 @@ public:
 
 	}
 
-	void createUniformBuffer()
+	void createUniformBuffers()
 	{
 		// Prepare and initialize the per-frame uniform buffer blocks containing shader uniforms
 		// Single uniforms like in OpenGL are no longer present in Vulkan. All Shader uniforms are passed via uniform buffer blocks
@@ -1868,6 +1876,8 @@ public:
 
 	// Handle to the device graphics queue that command buffers are submitted to
 	VkQueue queue;
+
+
 };
 
 #ifdef WIN32
