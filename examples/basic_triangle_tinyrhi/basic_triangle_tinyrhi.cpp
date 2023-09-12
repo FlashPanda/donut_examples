@@ -246,7 +246,7 @@ public:
 		}
 		
 		// Determine the number of images
-		uint32_t desiredNumberOfSwapchainImages = surfCaps.minImageCount + 1;
+		uint32_t desiredNumberOfSwapchainImages = surfCaps.minImageCount +1;
 		if ((surfCaps.maxImageCount > 0) && (desiredNumberOfSwapchainImages > surfCaps.maxImageCount))
 		{
 			desiredNumberOfSwapchainImages = surfCaps.maxImageCount;
@@ -333,6 +333,7 @@ public:
 		VK_CHECK_RESULT(vkGetSwapchainImagesKHR(device, swapChain, &imageCount, images.data()));
 
 		// Get the swap chain buffers containing the image and imageview
+		buffers.resize(imageCount);
 		for (uint32_t i = 0; i < imageCount; ++i)
 		{
 			VkImageViewCreateInfo colorAttachmentView{};
@@ -456,21 +457,40 @@ public:
 			return false;
 		}
 
+		// Get a graphics queue from the device
+		vkGetDeviceQueue(logicalDevice, queueFamilyIndices.graphics, 0, &queue);
+
 		swapChain.connect(instance, physicalDevice, logicalDevice);
 
 
 		return true;
 	}
 
-	void setupWindow(HINSTANCE hinstance, WNDPROC wndproc)
+	void setupWindow()
 	{
 		glfwInit();
 
+		//glfwDefaultWindowHints();
+
+		//glfwWindowHint(GLFW_RED_BITS, 8);
+		//glfwWindowHint(GLFW_GREEN_BITS, 8);
+		//glfwWindowHint(GLFW_BLUE_BITS, 8);
+		//glfwWindowHint(GLFW_ALPHA_BITS, 8);
+		//glfwWindowHint(GLFW_DEPTH_BITS, 0);
+		//glfwWindowHint(GLFW_STENCIL_BITS, 0);
+
+		//glfwWindowHint(GLFW_SAMPLES, 1);
+		//glfwWindowHint(GLFW_REFRESH_RATE, 0);
+
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+		//glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
 		window = glfwCreateWindow(1280, 720, "Vulkan", nullptr, nullptr);
 
+	}
+
+	void createWindowSurface()
+	{
 		// create window surface with respect to window
 		if (glfwCreateWindowSurface(instance, window, nullptr, &windowSurface) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create window surface!");
@@ -516,15 +536,72 @@ public:
 		}
 	}
 
+	// Command buffer pool
+	VkCommandPool cmdPool;
+	void createCommandPool()
+	{
+		VkCommandPoolCreateInfo cmdPoolInfo = {};
+		cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+		cmdPoolInfo.queueFamilyIndex = swapChain.queueNodeIndex;
+		cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+		VK_CHECK_RESULT(vkCreateCommandPool(logicalDevice, &cmdPoolInfo, nullptr, &cmdPool));
+	}
+
+	// Command buffers used for rendering
+	std::vector<VkCommandBuffer> drawCmdBuffers;
+	void createCommandBuffers_()
+	{
+		// Create one command buffer for each swap chain image and reuse for rendering
+		drawCmdBuffers.resize(swapChain.imageCount);
+
+		VkCommandBufferAllocateInfo commandBufferAllocateInfo{};
+		commandBufferAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		commandBufferAllocateInfo.commandPool = cmdPool;
+		commandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		commandBufferAllocateInfo.commandBufferCount = static_cast<uint32_t>(drawCmdBuffers.size());
+
+		VK_CHECK_RESULT(vkAllocateCommandBuffers(logicalDevice, &commandBufferAllocateInfo, drawCmdBuffers.data()));
+	}
+
+	std::vector<VkFence> waitFences_;
+
+	void createSynchronizationPrimitives_()
+	{
+		// Wait fences to sync command buffer access
+		VkFenceCreateInfo fenceCreateInfo{};
+		fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		fenceCreateInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+		waitFences_.resize(drawCmdBuffers.size());
+		for (auto& fence : waitFences_) {
+			VK_CHECK_RESULT(vkCreateFence(logicalDevice, &fenceCreateInfo, nullptr, &fence));
+		}
+	}
+
+	// Pipeline cache object
+	VkPipelineCache pipelineCache;
+	void createPipelineCache()
+	{
+		VkPipelineCacheCreateInfo pipelineCacheCreateInfo = {};
+		pipelineCacheCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+		VK_CHECK_RESULT(vkCreatePipelineCache(logicalDevice, &pipelineCacheCreateInfo, nullptr, &pipelineCache));
+	}
 	void prepare()
 	{
 		swapChain.initSurface(windowSurface);
 
+		//createCommandPool();
+
 		swapChain.create(&width, &height, settings.vsync, settings.fullscreen);
+
+		//createCommandBuffers_();
+
+		//createSynchronizationPrimitives_();
 
 		setupDepthStencil();
 
 		setupRenderPass();
+
+		//createPipelineCache();
 
 		setupFrameBuffer();
 
@@ -680,6 +757,7 @@ public:
 
 		// Submit the command buffer to queue to finish the copy
 		VkSubmitInfo submitInfo{};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &copyCmd;
 
@@ -850,7 +928,7 @@ public:
 	void renderLoop()
 	{
 		// message loop
-		while (!glfwWindowShouldClose(m_Window))
+		while (!glfwWindowShouldClose(window))
 		{
 
 			glfwPollEvents();
@@ -1011,19 +1089,39 @@ public:
 	/** @brief (Virtual) Creates the application wide Vulkan instance */
 	virtual VkResult createInstance(bool enableValidation)
 	{
+		if (!glfwVulkanSupported())
+		{
+			throw std::runtime_error("failed to create instance!");
+			return VK_INCOMPLETE;
+		}
+
+		// add any extensions required by GLFW
+		uint32_t glfwExtCount;
+		const char** glfwExt = glfwGetRequiredInstanceExtensions(&glfwExtCount);
+		assert(glfwExt);
+
+		std::vector<const char*> instanceExtensions;
+		for (uint32_t i = 0; i < glfwExtCount; ++i)
+		{
+			instanceExtensions.push_back(glfwExt[i]);
+		}
+
 		settings.validation = enableValidation;
 
 		VkApplicationInfo appInfo{};
+
 		appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 		appInfo.pApplicationName = name.c_str();
+		appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
 		appInfo.pEngineName = name.c_str();
+		appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
 		appInfo.apiVersion = apiVersion;
-
-		std::vector<const char*> instanceExtensions = { VK_KHR_SURFACE_EXTENSION_NAME };
-
-#if defined (_WIN32)
-		instanceExtensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
-#endif
+//
+//		std::vector<const char*> instanceExtensions = { VK_KHR_SURFACE_EXTENSION_NAME };
+//
+//#if defined (_WIN32)
+//		instanceExtensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
+//#endif
 		// check extension properties
 		// save supported extensions which will be used later
 		uint32_t extCount = 0;
@@ -1061,7 +1159,7 @@ public:
 		instanceCreateInfo.pApplicationInfo = &appInfo;
 
 		// Enable the debug utils extension if available (e.g. when debugging tools are present)
-		if (settings.validation || std::find(supportedInstanceExtensions.begin(), supportedInstanceExtensions.end(), VK_EXT_DEBUG_UTILS_EXTENSION_NAME) != supportedInstanceExtensions.end()) {
+		if (settings.validation && std::find(supportedInstanceExtensions.begin(), supportedInstanceExtensions.end(), VK_EXT_DEBUG_UTILS_EXTENSION_NAME) != supportedInstanceExtensions.end()) {
 			instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 		}
 
@@ -1201,6 +1299,19 @@ public:
 			deviceCreateInfo.pNext = &physicalDeviceFeatures2;
 		}
 
+		if (deviceExtensions.size() > 0)
+		{
+			for (const char* enabledExtension : deviceExtensions)
+			{
+				if (!extensionSupported(enabledExtension)) {
+					std::cerr << "Enabled device extension \"" << enabledExtension << "\" is not present at device level\n";
+				}
+			}
+
+			deviceCreateInfo.enabledExtensionCount = (uint32_t)deviceExtensions.size();
+			deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
+		}
+
 		this->enabledFeatures = enabledFeatures;
 
 		VkResult result = vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &logicalDevice);
@@ -1214,6 +1325,18 @@ public:
 
 		return result;
 
+	}
+
+	/**
+	* Check if an extension is supported by the (physical device)
+	*
+	* @param extension Name of the extension to check
+	*
+	* @return True if the extension is supported (present in the list read at device creation time)
+	*/
+	bool extensionSupported(std::string extension)
+	{
+		return (std::find(supportedExtensions.begin(), supportedExtensions.end(), extension) != supportedExtensions.end());
 	}
 
 	// Get the index of a queue family that supports the requested queue flags
@@ -1624,7 +1747,7 @@ public:
 		vertexInputAttributes[1].location = 1;
 		// Color attribute is three 32 bit signed (SFLOAT) floats (R32 G32 B32)
 		vertexInputAttributes[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-		vertexInputAttributes[1].offset = offsetof(Vertex, position);
+		vertexInputAttributes[1].offset = offsetof(Vertex, color);
 
 		// Vertex input state used for pipeline creation
 		VkPipelineVertexInputStateCreateInfo vertexInputStateCI{};
@@ -1641,7 +1764,7 @@ public:
 		shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 		// Set pipeline stage for this shader
 		shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-		shaderStages[0].module = loadSPIRVShader(getShaderPath() + "triangle/triangle.vert.spv");
+		shaderStages[0].module = loadSPIRVShader(getShaderPath() + "/triangle.vert.spv");
 		// Main entry point for the shader
 		shaderStages[0].pName = "main";
 		assert(shaderStages[0].module != VK_NULL_HANDLE);
@@ -1651,7 +1774,7 @@ public:
 		// Set pipeline stage for this shader
 		shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
 		// Load binary SPIR-V shader
-		shaderStages[1].module = loadSPIRVShader(getShaderPath() + "triangle/triangle.vert.spv");
+		shaderStages[1].module = loadSPIRVShader(getShaderPath() + "/triangle.frag.spv");
 		// Main entry point for the shader
 		shaderStages[1].pName = "main";
 		assert(shaderStages[1].module != VK_NULL_HANDLE);
@@ -1734,7 +1857,9 @@ public:
 
 	std::string getShaderPath()
 	{
-		return "C:/Developer/Vulkan/shaders/";
+		std::filesystem::path appShaderPath = donut::app::GetDirectoryWithExecutable() / "../examples/basic_triangle_tinyrhi/shaders";
+		
+		return appShaderPath.string();
 	}
 public:
 	// Synchronization primitives
@@ -1817,11 +1942,6 @@ public:
 	uint32_t width = 1280;
 	uint32_t height = 720;
 
-	// Command buffer pool
-	VkCommandPool cmdPool;
-	// Command buffers used for rendering
-	std::vector<VkCommandBuffer> drawCmdBuffers;
-
 	// The pipeline layout is used by a pipeline to access the descriptor sets
 	// It defines interface (without binding any actual data) between the shader stages used by the pipeline and the shader resources
 	// A pipeline layout can be shared among multiple pipelines as long as their interfaces match
@@ -1877,25 +1997,28 @@ public:
 	// Handle to the device graphics queue that command buffers are submitted to
 	VkQueue queue;
 
-
+	// Synchronization semaphores
+	struct {
+		// Swap chain image presentation
+		VkSemaphore presentComplete;
+		// Command buffer submission and execution
+		VkSemaphore renderComplete;
+	} semaphores;
 };
 
 #ifdef WIN32
-DeviceManager_Vulkan deviceVulkan;
-LRESULT CALLBACK WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
-{
-	deviceVulkan.handleMessages(hWnd, uMsg, wParam, lParam);
 
-	return (DefWindowProc(hWnd, uMsg, wParam, lParam));
-}
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 #else
 int main(int __argc, const char** __argv)
 #endif
 {
+	DeviceManager_Vulkan deviceVulkan;
+
+	deviceVulkan.setupWindow();
 	deviceVulkan.initVulkan();
-	deviceVulkan.setupWindow(hInstance, WndProc);
+	deviceVulkan.createWindowSurface();
 	deviceVulkan.prepare();
 	deviceVulkan.renderLoop();
     return 0;
