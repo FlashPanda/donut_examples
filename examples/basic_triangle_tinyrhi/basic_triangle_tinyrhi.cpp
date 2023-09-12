@@ -957,10 +957,10 @@ public:
 
 		// Update the uniform buffer for the next frame
 		ShaderData shaderData{};
-		donut::math::affine3 viewMatrix = donut::math::translation(donut::math::float3(0, 0, -2));
-		donut::math::float4x4 projMatrix = donut::math::perspProjD3DStyle(donut::math::radians(60.f), float(width) / float(height), 0.1f, 10.f);
+		donut::math::affine3 viewMatrix = donut::math::translation(donut::math::float3(0, 0, -2.5));
+		donut::math::float4x4 projMatrix = donut::math::perspProjOGLStyle(donut::math::radians(60.f), float(width) / float(height), 0.1f, 100.f);
 		donut::math::float4x4 viewProjMatrix = donut::math::affineToHomogeneous(viewMatrix) * projMatrix;
-		shaderData.modelMatrix = donut::math::float4x4();
+		shaderData.modelMatrix = donut::math::float4x4().identity();
 		shaderData.projectionMatrix = projMatrix;
 		shaderData.viewMatrix = donut::math::affineToHomogeneous(viewMatrix);
 
@@ -985,7 +985,7 @@ public:
 		// We use two attachements (color and depth) that are cleared at the start of the subpass and 
 		// as such we need to set clear values for both
 		VkClearValue clearValues[2];
-		clearValues[0].color = { {0.f, 0.f, 0.2f, 1.f} };
+		clearValues[0].color = { {0.f, 0.f, 0.1f, 1.f} };
 		clearValues[1].depthStencil = { 1.f, 0 };
 
 		VkRenderPassBeginInfo renderPassBeginInfo{};
